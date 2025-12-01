@@ -29,12 +29,38 @@ class BatchInfo:
 
 
 class TableUI:
-    def __init__(self):
+    def __init__(self, scroll_window_height: int = 10):
         self.batches: List[BatchInfo] = []
         self.spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.spinner_idx = 0
         self._spinner_lock = threading.Lock()
-        self._refresh_lock = threading.Lock()
+        self._refresh_lock = threading.RLock()
+
+        # Scrolling window state
+        self.scroll_window_height = scroll_window_height
+        self.output_lines: List[str] = []
+        self.scroll_position = 0  # Lines from the bottom to show
+
+    def add_output_text(self, text: str):
+        """Add text to the scrolling output window"""
+        with self._refresh_lock:
+            # Split text into lines and add to output
+            lines = text.split("\n")
+            for line in lines:
+                if line:  # Skip empty lines
+                    self.output_lines.append(line)
+
+            # Auto-scroll to bottom if we're already near the bottom
+            if self.scroll_position <= 2:
+                self.scroll_to_bottom()
+
+    def scroll_to_bottom(self):
+        """Scroll to show the most recent output"""
+        with self._refresh_lock:
+            if len(self.output_lines) > self.scroll_window_height:
+                self.scroll_position = 0  # Show last scroll_window_height lines
+            else:
+                self.scroll_position = len(self.output_lines)  # Show all lines
 
     def clear_screen(self):
         print("\033[2J\033[H", end="")
@@ -182,11 +208,20 @@ class TableUI:
                 preview_str = f"{preview}"
 
                 # Print the main row
-                row = batch_str + pages_str + input_str + output_str + status_str + preview_str
+                row = (
+                    batch_str
+                    + pages_str
+                    + input_str
+                    + output_str
+                    + status_str
+                    + preview_str
+                )
 
                 # Print colored status section
                 # Split the row and print parts with appropriate colors
-                self.print_color(batch_str + pages_str + input_str + output_str, "white")
+                self.print_color(
+                    batch_str + pages_str + input_str + output_str, "white"
+                )
                 self.print_color(status_str, status_color, bold=True)
                 self.print_color(preview_str, "white")
                 print()  # New line for next row
@@ -215,6 +250,79 @@ class TableUI:
 
             # Update spinner
             self.spinner_idx += 1
+
+        # Render scrolling output after releasing the lock to avoid deadlock
+        # The lock is automatically released when exiting the 'with' block
+        self.render_scrolling_output()
+
+    def render_scrolling_output(self):
+        """Render the scrolling output window"""
+        print()
+        self.print_color("─" * 80, "gray")
+        self.print_color("📝 OCR Output Stream", "yellow", bold=True)
+        self.print_color("─" * 80, "gray")
+        print()
+
+        with self._refresh_lock:
+            if not self.output_lines:
+                # Empty state
+                self.print_color("Waiting for OCR output...", "gray")
+                return
+
+            # Calculate which lines to show
+            total_lines = len(self.output_lines)
+            if total_lines <= self.scroll_window_height:
+                # Show all lines
+                lines_to_show = self.output_lines
+                start_idx = 0
+            else:
+                # Show last scroll_window_height lines
+                lines_to_show = self.output_lines[-self.scroll_window_height :]
+                start_idx = total_lines - self.scroll_window_height
+
+            # Render each line with formatting
+            for i, line in enumerate(lines_to_show):
+                self.render_formatted_line(line)
+                print()
+
+            # Scroll indicator
+            if total_lines > self.scroll_window_height:
+                self.print_color(
+                    f"↑ Showing lines {start_idx + 1}-{total_lines} of {total_lines} ↑",
+                    "gray",
+                )
+
+    def render_formatted_line(self, line: str):
+        """Render a single line with markdown formatting"""
+        stripped = line.lstrip()
+
+        # Headers
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if 1 <= level <= 6:
+                self.print_color(line, "cyan", bold=True)
+                return
+
+        # Code blocks
+        if stripped.startswith("```"):
+            if "markdown" in stripped:
+                self.print_color(line, "magenta", bold=True)
+            else:
+                self.print_color(line, "yellow", bold=True)
+            return
+
+        # Bold text markers
+        if "**" in line:
+            parts = line.split("**")
+            for i, part in enumerate(parts):
+                if i % 2 == 0:  # Regular text
+                    self.print_color(part, "white")
+                else:  # Bold text
+                    self.print_color(part, "white", bold=True)
+            return
+
+        # Regular text
+        self.print_color(line, "white")
 
     def display_final_results(
         self, output_file: str, total_pages: int, total_batches: int

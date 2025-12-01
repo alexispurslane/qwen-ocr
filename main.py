@@ -205,6 +205,9 @@ def process_and_save_batch(
         client, images, total_pages, batch_num, table_ui, context
     )
 
+    # Add the complete output to the scrolling window
+    table_ui.add_output_text(markdown)
+
     all_markdown.append(markdown)
 
     # Update header tracking
