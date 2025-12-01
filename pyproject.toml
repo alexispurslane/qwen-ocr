@@ -1,0 +1,17 @@
+[project]
+name = "qwen-ocr"
+version = "0.1.0"
+description = "Multi-Page PDF OCR using Qwen3-VL-235B model"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai",
+    "Pillow",
+    "pdf2image",
+    "PyPDF2",
+]
+
+[tool.pyright]
+include = ["."]
+exclude = ["**/__pycache__", "**/.git"]
+pythonVersion = "3.12"
