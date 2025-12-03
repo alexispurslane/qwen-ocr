@@ -18,9 +18,7 @@ def count_pages(pdf_path: str) -> int:
         pdf = PdfReader(pdf_path)
         return len(pdf.pages)
     except Exception as e:
-        from ui import print_color
-
-        print_color(f"❌ Error reading PDF metadata: {e}\n", color="red", bold=True)
+        print(f"❌ Error reading PDF metadata: {e}")
         raise RuntimeError(f"Failed to read PDF metadata for {pdf_path}") from e
 
 
@@ -49,33 +47,28 @@ def optimize_page(img: Image.Image) -> Tuple[bytes, Tuple[int, int]]:
 def pages_to_images_with_ui(
     pdf_path: str, start_page: int, end_page: int, output_dir: Optional[str] = None
 ) -> List[PageImage]:
-    from ui import SpinnerContext, print_color
-
-    with SpinnerContext(f"Converting pages {start_page}-{end_page}..."):
-        pages = convert_from_path(
-            pdf_path, first_page=start_page, last_page=end_page, dpi=PDF_DPI
-        )
-        if not pages:
-            raise ValueError("No pages found in range")
-
-        result = []
-        total_tokens = 0
-        for i, page_num in enumerate(range(start_page, end_page + 1)):
-            img = pages[i]
-            page_bytes, (width, height) = optimize_page(img)
-            tokens = (width // IMAGE_TOKEN_SIZE) * (height // IMAGE_TOKEN_SIZE)
-            total_tokens += tokens
-
-            if output_dir:
-                img_path = Path(output_dir) / Path(PAGE_IMAGE_PATTERN.format(page_num))
-                with open(img_path, "wb") as f:
-                    f.write(page_bytes)
-
-            result.append(PageImage(page_num, page_bytes, (width, height)))
-
-    print_color(
-        f"📄 Pages {start_page}-{end_page}: {total_tokens} tokens\n",
-        color="green",
+    print(f"  Converting pages {start_page}-{end_page}...")
+    pages = convert_from_path(
+        pdf_path, first_page=start_page, last_page=end_page, dpi=PDF_DPI
     )
+    if not pages:
+        raise ValueError("No pages found in range")
+
+    result = []
+    total_tokens = 0
+    for i, page_num in enumerate(range(start_page, end_page + 1)):
+        img = pages[i]
+        page_bytes, (width, height) = optimize_page(img)
+        tokens = (width // IMAGE_TOKEN_SIZE) * (height // IMAGE_TOKEN_SIZE)
+        total_tokens += tokens
+
+        if output_dir:
+            img_path = Path(output_dir) / Path(PAGE_IMAGE_PATTERN.format(page_num))
+            with open(img_path, "wb") as f:
+                f.write(page_bytes)
+
+        result.append(PageImage(page_num, page_bytes, (width, height)))
+
+    print(f"  📄 Pages {start_page}-{end_page}: {total_tokens} tokens")
 
     return result
