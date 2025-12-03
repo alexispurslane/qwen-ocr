@@ -22,6 +22,7 @@ Process a batch of document images and output ONLY the Markdown text. Maintain s
 ### Tables
 - Include all tables found in the document
 - **Output Format:** Exclusively use HTML `<table>` syntax. Do not use Markdown pipe tables.
+- **Include the Table number/title**
 - **Structure:** Preserves all `rowspan`, `colspan`, and multi-line cell content exactly as recognized.
 - **Spatial Rule:** Place the `<table>` block as close to its visual location as possible without breaking a sentence.
 - **Content:** Transcribe every cell accurately; do not summarize.
@@ -32,8 +33,9 @@ Process a batch of document images and output ONLY the Markdown text. Maintain s
 
 ### Figures & Images
 - **Always describe images and charts** - do not skip visual content
+- Do not simply transcribe the caption as the description. You must describe the data points, trend lines, or flow of the image itself.
 - **Include figure captions** (the text descriptions typically below figures)
-- Format: `![Figure: description of what the image shows and/or description of the figure]`
+- Format: `![Figure: {Detailed description of the visual elements, charts, or diagram content}. Caption: {Transcribed caption text}]`
 - For charts: describe the type of chart and key data points if readable
 - **Spatial Proximity** → Place figures as close to their visual position as possible. Do not move figures to different sections (e.g., do not move a Page 2 figure to the Results section).
 - **Flow Handling** → If a figure visually interrupts a paragraph, transcribe the full paragraph first, then place the figure Markdown immediately **after** the paragraph closes.
