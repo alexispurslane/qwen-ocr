@@ -12,6 +12,7 @@ import tiktoken
 from pdf_handler import count_pages, pages_to_images_with_ui
 from processing import build_image_content, build_messages, clean_markdown_output
 from processing import extract_headers, update_header_stack, build_context, PageImage
+from ui import UI
 
 
 MODEL_NAME = "hf:Qwen/Qwen3-VL-235B-A22B-Instruct"
@@ -53,23 +54,15 @@ def process_batch(
     images: List[PageImage],
     batch_num: int,
     total_batches: int,
-    context: str = "",
-    start_time: float = 0,
-    total_input_tokens: int = 0,
-    total_output_tokens: int = 0,
+    context: str,
+    ui: UI,
 ) -> Tuple[int, int, List[Tuple[int, str]]]:
     """Process a batch and stream to file, return token counts and headers"""
     from processing import build_image_content, build_messages, clean_markdown_output
     import time
 
     image_content, input_tokens = build_image_content(images)
-    print(f"\n📦 Batch {batch_num + 1}/{total_batches}")
-    print(f"  Input tokens: {input_tokens}")
-
-    # Calculate running I/O ratio from completed batches for progress estimation
-    io_ratio = 2.0
-    if total_output_tokens > 0 and total_input_tokens > 0:
-        io_ratio = total_output_tokens / total_input_tokens
+    ui.print_batch_start(batch_num, total_batches, input_tokens)
 
     last_exception = None
     for attempt in range(MAX_RETRY_ATTEMPTS):
@@ -93,9 +86,8 @@ def process_batch(
             last_lines = []
             last_update = 0
             update_interval = 0.05  # 20fps
-            chunk_count = 0
 
-            print("  Processing...")
+            ui.print_processing_message()
 
             for chunk in stream:
                 if not chunk.choices:
@@ -113,45 +105,13 @@ def process_batch(
                     current_time = time.time()
                     if current_time - last_update > update_interval:
                         last_update = current_time
-                        chunk_count += 1
 
                         # Get last N lines
                         all_lines = response_text.split("\n")
                         last_lines = all_lines[-lines_to_show:]
 
-                        # Simple cursor up and overwrite
-                        cursor_up = lines_to_show + 2  # lines + progress bar
-                        print(f"\033[{cursor_up}A\033[J", end="")
-
-                        # Show last lines
-                        print("Last output:")
-                        for line in last_lines:
-                            if len(line) > 100:
-                                line = line[:97] + "..."
-                            print(line)
-
-                        # Show progress based on streaming tokens
-                        elapsed = time.time() - start_time
-                        batch_progress = (
-                            min(output_tokens / (input_tokens * io_ratio), 1.0)
-                            if input_tokens > 0 and io_ratio > 0
-                            else 0
-                        )
-                        progress = (batch_num + batch_progress) / total_batches
-                        if progress > 0:
-                            eta = (elapsed / progress) - elapsed
-                            eta_str = f"{int(eta // 60)}m {int(eta % 60)}s"
-                        else:
-                            eta_str = "--"
-
-                        bar_width = 15
-                        filled = int(bar_width * progress)
-                        bar = "█" * filled + "░" * (bar_width - filled)
-
-                        total_in = total_input_tokens + input_tokens
-                        total_out = total_output_tokens + output_tokens
-                        print(
-                            f"[{bar}] {int(progress * 100)}% | ETA {eta_str} | ↑{total_in} ↓{total_out}"
+                        ui.update_progress_display(
+                            last_lines, output_tokens, lines_to_show
                         )
 
                 if hasattr(chunk, "usage") and chunk.usage:
@@ -161,30 +121,29 @@ def process_batch(
             cleaned_text = clean_markdown_output(response_text)
             headers = extract_headers(cleaned_text)
 
-            print(f"\n  Output tokens: ~{output_tokens}")
+            ui.print_batch_output_tokens(output_tokens)
             return input_tokens, output_tokens, headers
 
         except APIStatusError as e:
             if e.status_code < MIN_HTTP_ERROR_CODE:
-                print(f"\n  API error: {str(e)}")
+                ui.print_api_error(e.status_code)
                 raise RuntimeError(f"API error in batch {batch_num + 1}") from e
 
             last_exception = e
 
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 wait_time = EXPONENTIAL_BACKOFF_BASE**attempt
-                print(
-                    f"\n  ⚠️  Batch {batch_num + 1} failed (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}): HTTP {e.status_code}"
+                ui.print_batch_retry(
+                    batch_num, attempt, MAX_RETRY_ATTEMPTS, e.status_code, wait_time
                 )
-                print(f"  ⏳ Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
-                print(f"\n  ❌ Max retries exceeded: HTTP {e.status_code}")
+                ui.print_max_retries_exceeded(batch_num, e.status_code)
                 raise RuntimeError(
                     f"Max retries exceeded for batch {batch_num + 1}"
                 ) from last_exception
         except Exception as e:
-            print(f"\n  ❌ Unexpected error: {str(e)}")
+            ui.print_unexpected_error(str(e))
             raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
 
     raise RuntimeError("Unexpected code path")
@@ -218,19 +177,19 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def validate_file(pdf_path: str) -> bool:
+def validate_file(ui, pdf_path: str) -> bool:
     if not os.path.exists(pdf_path):
-        print(f"❌ File not found: {pdf_path}")
+        ui.print_file_not_found(pdf_path)
         return False
     return True
 
 
-def get_total_pages(pdf_path: str, specified_end: Optional[int]) -> int:
+def get_total_pages(ui, pdf_path: str, specified_end: Optional[int]) -> int:
     if specified_end:
         return specified_end
-    print("📊 Counting pages...")
+    ui.print_counting_pages()
     total = count_pages(pdf_path)
-    print(f"📄 Total: {total} pages")
+    ui.print_total_pages(total)
     return total
 
 
@@ -254,9 +213,7 @@ def process_and_save_batch(
     total_batches: int,
     images_dir: Optional[str],
     header_stack: List[Tuple[int, str]],
-    start_time: float,
-    total_input_tokens: int,
-    total_output_tokens: int,
+    ui: UI,
 ) -> Tuple[int, int]:
     from pdf_handler import pages_to_images_with_ui
     from processing import build_context
@@ -266,15 +223,7 @@ def process_and_save_batch(
     context = build_context([], header_stack) if header_stack else ""
 
     input_tokens, output_tokens, headers = process_batch(
-        client,
-        output_file,
-        images,
-        batch_num,
-        total_batches,
-        context,
-        start_time,
-        total_input_tokens,
-        total_output_tokens,
+        client, output_file, images, batch_num, total_batches, context, ui
     )
 
     update_header_stack(header_stack, headers)
@@ -288,33 +237,28 @@ def process_and_save_batch(
 def main():
     import time
 
+    ui = UI()
+
     args = parse_arguments()
 
-    if not validate_file(args.pdf_file):
+    if not validate_file(ui, args.pdf_file):
         sys.exit(1)
 
-    print("🌐 Multi-Page PDF OCR with Qwen3-VL-235B")
-    print(f"🤖 Model: {MODEL_NAME}")
-    print(f"📋 {args.pdf_file}")
-    if args.end_page:
-        print(f"📄 Pages {args.start_page}-{args.end_page}")
+    ui.print_header(MODEL_NAME, args.pdf_file, args.start_page, args.end_page)
 
-    total_pages = get_total_pages(args.pdf_file, args.end_page)
+    total_pages = get_total_pages(ui, args.pdf_file, args.end_page)
 
     output_file_path, images_dir = setup_output_files(args.pdf_file, args.save_images)
-    print(f"📝 Output will be saved to: {output_file_path}")
-    if images_dir:
-        print(f"💾 Saving images to: {images_dir}")
+    ui.print_output_info(output_file_path, images_dir)
 
     pages_in_range = total_pages - args.start_page + 1
     total_batches = math.ceil(pages_in_range / args.batch_size)
 
-    if total_batches > 1:
-        print(f"📦 {total_batches} batches of ~{args.batch_size} pages")
+    ui.print_batch_info(total_batches, args.batch_size)
 
     api_key = os.environ.get("SYNTHETIC_API_KEY")
     if not api_key:
-        print("❌ Set SYNTHETIC_API_KEY environment variable")
+        ui.print_api_key_missing()
         sys.exit(1)
 
     client = openai.OpenAI(api_key=api_key, base_url=API_BASE_URL)
@@ -323,6 +267,7 @@ def main():
     total_input_tokens = 0
     total_output_tokens = 0
     start_time = time.time()
+    ui.set_batch_info(total_batches, start_time)
 
     with open(output_file_path, "w", encoding="utf-8") as output_file:
         for batch_num, page_start, page_end in batch_iterator(
@@ -338,23 +283,22 @@ def main():
                 total_batches,
                 images_dir,
                 header_stack,
-                start_time,
-                total_input_tokens,
-                total_output_tokens,
+                ui,
             )
             total_input_tokens += input_toks
             total_output_tokens += output_toks
 
     end_time = time.time()
     elapsed_total = end_time - start_time
-    mins = int(elapsed_total // 60)
-    secs = int(elapsed_total % 60)
 
-    print(f"\n✅ Processing complete!")
-    print(f"📄 Output saved to: {output_file_path}")
-    print(f"📊 Processed {total_pages} pages in {total_batches} batches")
-    print(f"📊 Total tokens: ↓{total_input_tokens} ↑{total_output_tokens}")
-    print(f"⏱️  Total time: {mins}m {secs}s")
+    ui.print_processing_complete(
+        output_file_path,
+        total_pages,
+        total_batches,
+        total_input_tokens,
+        total_output_tokens,
+        elapsed_total,
+    )
 
 
 if __name__ == "__main__":
