@@ -9,6 +9,7 @@ dependencies = [
     "Pillow",
     "pdf2image",
     "PyPDF2",
+    "tiktoken",
 ]
 
 [tool.pyright]

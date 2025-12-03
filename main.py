@@ -3,10 +3,11 @@ import sys
 import time
 import math
 import argparse
-from typing import List, Optional, Tuple, Dict, Any, cast
+from typing import List, Optional, Tuple, cast
 import openai
 from openai import APIStatusError
 from openai.types.chat import ChatCompletionMessageParam
+import tiktoken
 
 from pdf_handler import count_pages, pages_to_images_with_ui
 from processing import build_image_content, build_messages, clean_markdown_output
@@ -15,6 +16,11 @@ from processing import extract_headers, update_header_stack, build_context, Page
 
 MODEL_NAME = "hf:Qwen/Qwen3-VL-235B-A22B-Instruct"
 API_BASE_URL = "https://api.synthetic.new/v1/"
+
+# For token counting - use a similar model's tokenizer since Qwen3-VL might not be in tiktoken
+# GPT-4 tokenizer should be close enough for approximate counting
+TOKENIZER_MODEL = "gpt-4"
+enc = tiktoken.encoding_for_model(TOKENIZER_MODEL)
 
 MAX_TOKENS = 64000
 TEMPERATURE = 0.1
@@ -43,16 +49,27 @@ def setup_output_files(pdf_path: str, save_images: bool):
 
 def process_batch(
     client: openai.OpenAI,
+    output_file,
     images: List[PageImage],
-    total_pages: int,
     batch_num: int,
+    total_batches: int,
     context: str = "",
-) -> Tuple[str, int]:
-    """Process a batch and return markdown and token count"""
+    start_time: float = 0,
+    total_input_tokens: int = 0,
+    total_output_tokens: int = 0,
+) -> Tuple[int, int, List[Tuple[int, str]]]:
+    """Process a batch and stream to file, return token counts and headers"""
     from processing import build_image_content, build_messages, clean_markdown_output
+    import time
 
     image_content, input_tokens = build_image_content(images)
+    print(f"\n📦 Batch {batch_num + 1}/{total_batches}")
     print(f"  Input tokens: {input_tokens}")
+
+    # Calculate running I/O ratio from completed batches for progress estimation
+    io_ratio = 2.0
+    if total_output_tokens > 0 and total_input_tokens > 0:
+        io_ratio = total_output_tokens / total_input_tokens
 
     last_exception = None
     for attempt in range(MAX_RETRY_ATTEMPTS):
@@ -70,7 +87,15 @@ def process_batch(
 
             response_text = ""
             output_tokens = 0
-            print("  🤖 Generating response...", end="", flush=True)
+
+            # Track lines for display
+            lines_to_show = 5
+            last_lines = []
+            last_update = 0
+            update_interval = 0.05  # 20fps
+            chunk_count = 0
+
+            print("  Processing...")
 
             for chunk in stream:
                 if not chunk.choices:
@@ -79,19 +104,65 @@ def process_batch(
                 delta = chunk.choices[0].delta
                 if delta.content:
                     response_text += delta.content
-                    print(delta.content, end="", flush=True)
+                    # Count tokens live as we stream
+                    output_tokens = len(enc.encode(response_text))
+                    output_file.write(delta.content)
+                    output_file.flush()
 
-                # Try to get usage data from final chunk
+                    # Update display periodically
+                    current_time = time.time()
+                    if current_time - last_update > update_interval:
+                        last_update = current_time
+                        chunk_count += 1
+
+                        # Get last N lines
+                        all_lines = response_text.split("\n")
+                        last_lines = all_lines[-lines_to_show:]
+
+                        # Simple cursor up and overwrite
+                        cursor_up = lines_to_show + 2  # lines + progress bar
+                        print(f"\033[{cursor_up}A\033[J", end="")
+
+                        # Show last lines
+                        print("Last output:")
+                        for line in last_lines:
+                            if len(line) > 100:
+                                line = line[:97] + "..."
+                            print(line)
+
+                        # Show progress based on streaming tokens
+                        elapsed = time.time() - start_time
+                        batch_progress = (
+                            min(output_tokens / (input_tokens * io_ratio), 1.0)
+                            if input_tokens > 0 and io_ratio > 0
+                            else 0
+                        )
+                        progress = (batch_num + batch_progress) / total_batches
+                        if progress > 0:
+                            eta = (elapsed / progress) - elapsed
+                            eta_str = f"{int(eta // 60)}m {int(eta % 60)}s"
+                        else:
+                            eta_str = "--"
+
+                        bar_width = 15
+                        filled = int(bar_width * progress)
+                        bar = "█" * filled + "░" * (bar_width - filled)
+
+                        total_in = total_input_tokens + input_tokens
+                        total_out = total_output_tokens + output_tokens
+                        print(
+                            f"[{bar}] {int(progress * 100)}% | ETA {eta_str} | ↑{total_in} ↓{total_out}"
+                        )
+
                 if hasattr(chunk, "usage") and chunk.usage:
                     output_tokens = chunk.usage.total_tokens
 
-            print()  # New line after streaming completes
+            # Clean the response for header extraction
+            cleaned_text = clean_markdown_output(response_text)
+            headers = extract_headers(cleaned_text)
 
-            # Clean the response
-            response_text = clean_markdown_output(response_text)
-
-            print(f"  Output tokens: ~{output_tokens}")
-            return response_text, output_tokens
+            print(f"\n  Output tokens: ~{output_tokens}")
+            return input_tokens, output_tokens, headers
 
         except APIStatusError as e:
             if e.status_code < MIN_HTTP_ERROR_CODE:
@@ -176,46 +247,47 @@ def batch_iterator(start_page: int, end_page: int, batch_size: int):
 def process_and_save_batch(
     client: openai.OpenAI,
     pdf_path: str,
+    output_file,
     page_start: int,
     page_end: int,
-    total_pages: int,
     batch_num: int,
-    batch_size: int,
     total_batches: int,
     images_dir: Optional[str],
-    output_file: str,
-    all_markdown: List[str],
     header_stack: List[Tuple[int, str]],
-) -> None:
+    start_time: float,
+    total_input_tokens: int,
+    total_output_tokens: int,
+) -> Tuple[int, int]:
     from pdf_handler import pages_to_images_with_ui
-    from processing import build_context, extract_headers, update_header_stack
-
-    print(
-        f"\n📦 Processing batch {batch_num + 1}/{total_batches} (pages {page_start}-{page_end})"
-    )
+    from processing import build_context
 
     images = pages_to_images_with_ui(pdf_path, page_start, page_end, images_dir)
 
-    context = build_context(all_markdown, header_stack)
+    context = build_context([], header_stack) if header_stack else ""
 
-    markdown, output_tokens = process_batch(
-        client, images, total_pages, batch_num, context
+    input_tokens, output_tokens, headers = process_batch(
+        client,
+        output_file,
+        images,
+        batch_num,
+        total_batches,
+        context,
+        start_time,
+        total_input_tokens,
+        total_output_tokens,
     )
 
-    all_markdown.append(markdown)
-
-    headers = extract_headers(markdown)
     update_header_stack(header_stack, headers)
-
-    with open(output_file, "a", encoding="utf-8") as f:
-        f.write(markdown)
-        f.flush()
 
     if batch_num < total_batches - 1:
         time.sleep(1)
 
+    return input_tokens, output_tokens
+
 
 def main():
+    import time
+
     args = parse_arguments()
 
     if not validate_file(args.pdf_file):
@@ -229,8 +301,8 @@ def main():
 
     total_pages = get_total_pages(args.pdf_file, args.end_page)
 
-    output_file, images_dir = setup_output_files(args.pdf_file, args.save_images)
-    print(f"📝 Output will be saved to: {output_file}")
+    output_file_path, images_dir = setup_output_files(args.pdf_file, args.save_images)
+    print(f"📝 Output will be saved to: {output_file_path}")
     if images_dir:
         print(f"💾 Saving images to: {images_dir}")
 
@@ -247,30 +319,42 @@ def main():
 
     client = openai.OpenAI(api_key=api_key, base_url=API_BASE_URL)
 
-    all_markdown: List[str] = []
     header_stack: List[Tuple[int, str]] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    start_time = time.time()
 
-    for batch_num, page_start, page_end in batch_iterator(
-        args.start_page, total_pages, args.batch_size
-    ):
-        process_and_save_batch(
-            client,
-            args.pdf_file,
-            page_start,
-            page_end,
-            total_pages,
-            batch_num,
-            args.batch_size,
-            total_batches,
-            images_dir,
-            output_file,
-            all_markdown,
-            header_stack,
-        )
+    with open(output_file_path, "w", encoding="utf-8") as output_file:
+        for batch_num, page_start, page_end in batch_iterator(
+            args.start_page, total_pages, args.batch_size
+        ):
+            input_toks, output_toks = process_and_save_batch(
+                client,
+                args.pdf_file,
+                output_file,
+                page_start,
+                page_end,
+                batch_num,
+                total_batches,
+                images_dir,
+                header_stack,
+                start_time,
+                total_input_tokens,
+                total_output_tokens,
+            )
+            total_input_tokens += input_toks
+            total_output_tokens += output_toks
+
+    end_time = time.time()
+    elapsed_total = end_time - start_time
+    mins = int(elapsed_total // 60)
+    secs = int(elapsed_total % 60)
 
     print(f"\n✅ Processing complete!")
-    print(f"📄 Output saved to: {output_file}")
+    print(f"📄 Output saved to: {output_file_path}")
     print(f"📊 Processed {total_pages} pages in {total_batches} batches")
+    print(f"📊 Total tokens: ↓{total_input_tokens} ↑{total_output_tokens}")
+    print(f"⏱️  Total time: {mins}m {secs}s")
 
 
 if __name__ == "__main__":
