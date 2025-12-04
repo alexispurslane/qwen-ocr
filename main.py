@@ -3,7 +3,7 @@ import sys
 import time
 import math
 import argparse
-from typing import List, Optional, Tuple, cast
+from typing import List, Optional, Tuple, cast, Dict
 import openai
 from openai import APIStatusError
 from openai.types.chat import ChatCompletionMessageParam
@@ -13,6 +13,7 @@ from pdf_handler import count_pages, pages_to_images_with_ui
 from processing import build_image_content, build_messages, clean_markdown_output
 from processing import extract_headers, update_header_stack, build_context, PageImage
 from ui import UI
+from schema import OCRResponse, ImageMetadata
 
 
 MODEL_NAME = "hf:Qwen/Qwen3-VL-235B-A22B-Instruct"
@@ -37,15 +38,18 @@ IMAGES_DIR_SUFFIX = "_images"
 EXPONENTIAL_BACKOFF_BASE = 2
 
 
-def setup_output_files(pdf_path: str, save_images: bool):
+def setup_output_files(pdf_path: str):
     from pathlib import Path
 
-    output_file = Path(pdf_path).stem + OUTPUT_SUFFIX
-    images_dir = None
-    if save_images:
-        images_dir = Path(pdf_path).stem + IMAGES_DIR_SUFFIX
-        Path(images_dir).mkdir(exist_ok=True)
-    return output_file, images_dir
+    pdf_stem = Path(pdf_path).stem
+    doc_dir = Path(f"{pdf_stem}_converted")
+    doc_dir.mkdir(exist_ok=True)
+
+    markdown_file = doc_dir / "index.md"
+    images_dir = doc_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    return markdown_file, images_dir
 
 
 def process_batch(
@@ -215,15 +219,20 @@ def process_and_save_batch(
     header_stack: List[Tuple[int, str]],
     ui: UI,
 ) -> Tuple[int, int]:
-    from pdf_handler import pages_to_images_with_ui
-    from processing import build_context
-
     images = pages_to_images_with_ui(pdf_path, page_start, page_end, images_dir)
 
     context = build_context([], header_stack) if header_stack else ""
 
-    input_tokens, output_tokens, headers = process_batch(
-        client, output_file, images, batch_num, total_batches, context, ui
+    input_tokens, output_tokens, headers = process_batch_structured(
+        client,
+        output_file,
+        images,
+        batch_num,
+        total_batches,
+        page_start,
+        images_dir,
+        context,
+        ui,
     )
 
     update_header_stack(header_stack, headers)
@@ -248,7 +257,7 @@ def main():
 
     total_pages = get_total_pages(ui, args.pdf_file, args.end_page)
 
-    output_file_path, images_dir = setup_output_files(args.pdf_file, args.save_images)
+    output_file_path, images_dir = setup_output_files(args.pdf_file)
     ui.print_output_info(output_file_path, images_dir)
 
     pages_in_range = total_pages - args.start_page + 1
@@ -299,6 +308,125 @@ def main():
         total_output_tokens,
         elapsed_total,
     )
+
+
+def extract_delta(old: str, new: str) -> str:
+    """Compute delta between accumulated markdown states"""
+    if not old:
+        return new
+    if new.startswith(old):
+        return new[len(old) :]
+    return new
+
+
+def process_batch_structured(
+    client: openai.OpenAI,
+    output_file,
+    images: List[PageImage],
+    batch_num: int,
+    total_batches: int,
+    page_start: int,
+    images_dir: Optional[str],
+    context: str,
+    ui: UI,
+) -> Tuple[int, int, List[Tuple[int, str]]]:
+    """Process a batch using structured streaming output"""
+    from pdf_handler import extract_and_save_image
+
+    image_content, input_tokens = build_image_content(images)
+    ui.print_batch_start(batch_num, total_batches, input_tokens)
+
+    messages = build_messages(context, image_content, len(images))
+
+    last_exception = None
+    for attempt in range(MAX_RETRY_ATTEMPTS):
+        try:
+            with client.beta.chat.completions.stream(
+                model=MODEL_NAME,
+                messages=cast(List[ChatCompletionMessageParam], messages),
+                response_format=OCRResponse,
+            ) as stream:
+                accumulated_markdown = ""
+                accumulated_images: Dict[str, ImageMetadata] = {}
+                output_tokens = 0
+                images_extracted = 0
+
+                ui.print_processing_message()
+
+                for event in stream:
+                    if event.type == "content.delta":
+                        if hasattr(event, "parsed") and event.parsed:
+                            parsed = event.parsed
+
+                            markdown_val = getattr(parsed, "markdown", None)
+                            if markdown_val:
+                                new_content = extract_delta(
+                                    accumulated_markdown, str(markdown_val)
+                                )
+                                accumulated_markdown = str(markdown_val)
+                                output_file.write(new_content)
+                                output_file.flush()
+
+                                tokens = len(enc.encode(accumulated_markdown))
+                                output_tokens = max(output_tokens, tokens)
+
+                            images_val = getattr(parsed, "images", None)
+                            if images_val:
+                                for fig_id, metadata in images_val.items():
+                                    if (
+                                        fig_id not in accumulated_images
+                                        or metadata.bbox
+                                        != accumulated_images[fig_id].bbox
+                                    ):
+                                        if images_dir:
+                                            try:
+                                                extract_and_save_image(
+                                                    fig_id,
+                                                    metadata,
+                                                    page_start,
+                                                    images,
+                                                    images_dir,
+                                                    ui,
+                                                )
+                                                images_extracted += 1
+                                            except Exception as e:
+                                                ui.print_streaming_error(
+                                                    f"Image extraction failed: {e}"
+                                                )
+
+                                    accumulated_images[fig_id] = metadata
+
+                ui.print_batch_stats(images_extracted)
+
+                cleaned_markdown = clean_markdown_output(accumulated_markdown)
+                headers = extract_headers(cleaned_markdown)
+
+                ui.print_batch_output_tokens(output_tokens)
+                return input_tokens, output_tokens, headers
+
+        except APIStatusError as e:
+            if e.status_code < MIN_HTTP_ERROR_CODE:
+                ui.print_api_error(e.status_code)
+                raise RuntimeError(f"API error in batch {batch_num + 1}") from e
+
+            last_exception = e
+
+            if attempt < MAX_RETRY_ATTEMPTS - 1:
+                wait_time = EXPONENTIAL_BACKOFF_BASE**attempt
+                ui.print_batch_retry(
+                    batch_num, attempt, MAX_RETRY_ATTEMPTS, e.status_code, wait_time
+                )
+                time.sleep(wait_time)
+            else:
+                ui.print_max_retries_exceeded(batch_num, e.status_code)
+                raise RuntimeError(
+                    f"Max retries exceeded for batch {batch_num + 1}"
+                ) from last_exception
+        except Exception as e:
+            ui.print_unexpected_error(str(e))
+            raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
+
+    raise RuntimeError("Unexpected code path")
 
 
 if __name__ == "__main__":

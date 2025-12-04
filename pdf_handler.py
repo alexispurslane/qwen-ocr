@@ -5,6 +5,7 @@ from PIL import Image
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader
 from processing import PageImage
+from schema import ImageMetadata
 
 PDF_DPI = 100
 WHITE_THRESHOLD = 250
@@ -72,3 +73,51 @@ def pages_to_images_with_ui(
     print(f"  📄 Pages {start_page}-{end_page}: {total_tokens} tokens")
 
     return result
+
+
+def extract_image_from_page(
+    page_image: PageImage, bbox: Tuple[int, int, int, int]
+) -> Image.Image:
+    """Extract region from page image using bounding box"""
+    img = Image.open(BytesIO(page_image.image_bytes))
+    x1, y1, x2, y2 = bbox
+    cropped = img.crop((x1, y1, x2, y2))
+    return cropped
+
+
+def save_extracted_image(image: Image.Image, fig_id: str, images_dir: str) -> str:
+    """Save extracted image and return relative path"""
+    filename = f"{fig_id}.png"
+    filepath = Path(images_dir) / filename
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    image.save(filepath, "PNG")
+    return filename
+
+
+def extract_and_save_image(
+    fig_id: str,
+    metadata: ImageMetadata,
+    page_start: int,
+    images: List[PageImage],
+    images_dir: str,
+    ui,
+) -> None:
+    """Extract image from page and save to disk"""
+    try:
+        absolute_page = page_start + metadata.batch_page - 1
+        page_image = next(img for img in images if img.page_num == absolute_page)
+
+        width, height = page_image.dimensions
+        x1, y1, x2, y2 = metadata.bbox
+
+        if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+            raise ValueError(
+                f"Invalid bbox {metadata.bbox} for page dimensions {width}x{height}"
+            )
+
+        cropped = extract_image_from_page(page_image, metadata.bbox)
+        save_extracted_image(cropped, fig_id, str(images_dir))
+        ui.print_image_extraction_success(fig_id, absolute_page)
+
+    except Exception as e:
+        ui.print_image_extraction_error(fig_id, str(e))

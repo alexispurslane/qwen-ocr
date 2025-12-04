@@ -1,15 +1,13 @@
 import base64
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
-from io import BytesIO
-from PIL import Image
 
 
-SYSTEM_PROMPT = """You are a Document Digitization Engine converting PDF pages to Markdown. This is a continuous document flowing across pages - treat it as one cohesive text.
+SYSTEM_PROMPT = """You are a Document Digitization Engine converting PDF pages to Markdown with extracted images. This is a continuous document flowing across pages - treat it as one cohesive text.
 
 ## Your Task
 
-Process a batch of document images and output ONLY the Markdown text. Maintain seamless flow between pages in the batch and from previous context.
+Process a batch of document images and output structured data containing Markdown text with image references and image metadata. Maintain seamless flow between pages in the batch and from previous context.
 
 ## Critical Rules
 
@@ -32,27 +30,39 @@ Process a batch of document images and output ONLY the Markdown text. Maintain s
 - Preserve all mathematical notation exactly
 
 ### Figures & Images
-- **Always describe images and charts** - do not skip visual content
-- Do not simply transcribe the caption as the description. You must describe the data points, trend lines, or flow of the image itself.
-- **Include figure captions** (the text descriptions typically below figures)
-- Format: `![Figure: {Detailed description of the visual elements, charts, or diagram content}. Caption: {Transcribed caption text}]`
-- For charts: describe the type of chart and key data points if readable
-- **Spatial Proximity** → Place figures as close to their visual position as possible. Do not move figures to different sections (e.g., do not move a Page 2 figure to the Results section).
-- **Flow Handling** → If a figure visually interrupts a paragraph, transcribe the full paragraph first, then place the figure Markdown immediately **after** the paragraph closes.
+- Identify ALL visual elements: figures, charts, graphs, screenshots, diagrams
+- Generate unique figure IDs in format: figure_1.png, figure_2.png, chart_1.png, diagram_1.png
+- For each visual element, provide:
+  - Bounding box coordinates [x1, y1, x2, y2] in pixel coordinates
+  - Caption text as the image description
+- Reference each figure in markdown using: `![caption text](images/figure_id.png)`
+- **Spatial Proximity** → Place figures as close to their visual position as possible. Do not move figures to different sections.
+- **Flow Handling** → If a figure visually interrupts a paragraph, transcribe the full paragraph first, then place the figure reference immediately **after** the paragraph closes.
 
 ### Lists
 - Continue across pages without restarting numbering
 
 ### Footnotes
-
 - Footnotes should use markdown syntax: `[^n]` and then, below the paragraph within which the footnote appears, `[^n]: footnote content...`
 
 ## Output Format
 
-Return ONLY raw Markdown:
-- No code blocks or preambles
-- No page separation markers
-- Just the continuous document content
+Return structured JSON with two fields:
+1. `markdown`: Complete markdown transcription with `![caption](images/filename.png)` references
+2. `images`: Object mapping filenames to metadata with page numbers and bounding boxes
+
+Example structure:
+```json
+{
+  "markdown": "Here is the text with ![Figure 1 showing growth](images/figure_1.png) embedded.",
+  "images": {
+    "figure_1.png": {
+      "batch_page": 1,
+      "bbox": [100, 150, 400, 350]
+    }
+  }
+}
+```
 """
 
 PRECEDING_CONTEXT_HEADER = "## PRECEDING CONTEXT (Read-Only, use for flow continuity):"

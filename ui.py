@@ -1,6 +1,5 @@
 import time
-import math
-from typing import List, Tuple, Optional
+from typing import List, Optional
 
 
 class UI:
@@ -73,7 +72,7 @@ class UI:
         mins = int(elapsed_seconds // 60)
         secs = int(elapsed_seconds % 60)
 
-        print(f"\n✅ Processing complete!")
+        print("\n✅ Processing complete!")
         print(f"📄 Output saved to: {output_file_path}")
         print(f"📊 Processed {total_pages} pages in {total_batches} batches")
         print(f"📊 Total tokens: ↓{total_input_tokens} ↑{total_output_tokens}")
@@ -176,3 +175,16 @@ class UI:
         total_in = self.total_input_tokens + self.current_batch_input_tokens
         total_out = self.total_output_tokens + output_tokens
         print(f"[{bar}] {percentage}% | ETA {eta_str} | ↑{total_in} ↓{total_out}")
+
+    def print_image_extraction_success(self, fig_id: str, page_num: int) -> None:
+        print(f"  📸 Extracted {fig_id} from page {page_num}")
+
+    def print_image_extraction_error(self, fig_id: str, error_msg: str) -> None:
+        print(f"  ❌ Failed to extract {fig_id}: {error_msg}")
+
+    def print_streaming_error(self, error_msg: str) -> None:
+        print(f"  ⚠️  Streaming error: {error_msg}")
+
+    def print_batch_stats(self, images_extracted: int) -> None:
+        if images_extracted > 0:
+            print(f"  📊 Extracted {images_extracted} images")
