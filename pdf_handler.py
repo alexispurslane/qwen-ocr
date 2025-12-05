@@ -7,16 +7,16 @@ from PyPDF2 import PdfReader
 from processing import PageImage
 from schema import ImageMetadata
 
-PDF_DPI = 100
+PDF_DPI = 130
 WHITE_THRESHOLD = 250
 IMAGE_TOKEN_SIZE = 28
 PAGE_IMAGE_PATTERN = "page_{:04d}.png"
 
 
-def count_pages(pdf_path: str) -> int:
+def count_pages(pdf_path: Path) -> int:
     """Quick count of pages using PDF metadata"""
     try:
-        pdf = PdfReader(pdf_path)
+        pdf = PdfReader(str(pdf_path))
         return len(pdf.pages)
     except Exception as e:
         print(f"❌ Error reading PDF metadata: {e}")
@@ -33,11 +33,6 @@ def optimize_page(img: Image.Image) -> Tuple[bytes, Tuple[int, int]]:
     if bbox:
         img = img.crop(bbox)
 
-    new_width = (img.width // IMAGE_TOKEN_SIZE) * IMAGE_TOKEN_SIZE
-    new_height = (img.height // IMAGE_TOKEN_SIZE) * IMAGE_TOKEN_SIZE
-    if new_width > 0 and new_height > 0:
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
     buffer = BytesIO()
     img.save(buffer, format="PNG", optimize=True)
     buffer.seek(0)
@@ -46,11 +41,11 @@ def optimize_page(img: Image.Image) -> Tuple[bytes, Tuple[int, int]]:
 
 
 def pages_to_images_with_ui(
-    pdf_path: str, start_page: int, end_page: int, output_dir: Optional[str] = None
+    pdf_path: Path, start_page: int, end_page: int, output_dir: Optional[Path] = None
 ) -> List[PageImage]:
     print(f"  Converting pages {start_page}-{end_page}...")
     pages = convert_from_path(
-        pdf_path, first_page=start_page, last_page=end_page, dpi=PDF_DPI
+        str(pdf_path), first_page=start_page, last_page=end_page, dpi=PDF_DPI
     )
     if not pages:
         raise ValueError("No pages found in range")
@@ -64,7 +59,7 @@ def pages_to_images_with_ui(
         total_tokens += tokens
 
         if output_dir:
-            img_path = Path(output_dir) / Path(PAGE_IMAGE_PATTERN.format(page_num))
+            img_path = output_dir / PAGE_IMAGE_PATTERN.format(page_num)
             with open(img_path, "wb") as f:
                 f.write(page_bytes)
 
@@ -78,17 +73,25 @@ def pages_to_images_with_ui(
 def extract_image_from_page(
     page_image: PageImage, bbox: Tuple[int, int, int, int]
 ) -> Image.Image:
-    """Extract region from page image using bounding box"""
+    """Extract region from page image using normalized bounding box (0-1000)"""
     img = Image.open(BytesIO(page_image.image_bytes))
-    x1, y1, x2, y2 = bbox
+    width, height = page_image.dimensions
+
+    # Convert normalized coordinates (0-1000) to pixel coordinates
+    x1_norm, y1_norm, x2_norm, y2_norm = bbox
+    x1 = int(x1_norm * width / 1000)
+    y1 = int(y1_norm * height / 1000)
+    x2 = int(x2_norm * width / 1000)
+    y2 = int(y2_norm * height / 1000)
+
     cropped = img.crop((x1, y1, x2, y2))
     return cropped
 
 
-def save_extracted_image(image: Image.Image, fig_id: str, images_dir: str) -> str:
+def save_extracted_image(image: Image.Image, fig_id: str, images_dir: Path) -> str:
     """Save extracted image and return relative path"""
     filename = f"{fig_id}.png"
-    filepath = Path(images_dir) / filename
+    filepath = images_dir / filename
     filepath.parent.mkdir(parents=True, exist_ok=True)
     image.save(filepath, "PNG")
     return filename
@@ -97,27 +100,26 @@ def save_extracted_image(image: Image.Image, fig_id: str, images_dir: str) -> st
 def extract_and_save_image(
     fig_id: str,
     metadata: ImageMetadata,
-    page_start: int,
     images: List[PageImage],
-    images_dir: str,
+    images_dir: Path,
     ui,
 ) -> None:
-    """Extract image from page and save to disk"""
+    "" """Extract image from page and save to disk"""
     try:
-        absolute_page = page_start + metadata.batch_page - 1
-        page_image = next(img for img in images if img.page_num == absolute_page)
+        page_number = metadata.page_number
+        page_image = next(img for img in images if img.page_num == page_number)
 
-        width, height = page_image.dimensions
         x1, y1, x2, y2 = metadata.bbox
 
-        if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+        # Validate normalized bbox coordinates (0-1000)
+        if not (0 <= x1 < x2 <= 1000 and 0 <= y1 < y2 <= 1000):
             raise ValueError(
-                f"Invalid bbox {metadata.bbox} for page dimensions {width}x{height}"
+                f"Invalid normalized bbox {metadata.bbox}. Must satisfy: 0 <= x1 < x2 <= 1000 and 0 <= y1 < y2 <= 1000"
             )
 
         cropped = extract_image_from_page(page_image, metadata.bbox)
-        save_extracted_image(cropped, fig_id, str(images_dir))
-        ui.print_image_extraction_success(fig_id, absolute_page)
+        save_extracted_image(cropped, fig_id, images_dir)
+        ui.print_image_extraction_success(fig_id, page_number)
 
     except Exception as e:
         ui.print_image_extraction_error(fig_id, str(e))

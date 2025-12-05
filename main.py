@@ -3,42 +3,33 @@ import sys
 import time
 import math
 import argparse
-from typing import List, Optional, Tuple, cast, Dict
-import openai
-from openai import APIStatusError
+import asyncio
+from typing import List, Optional, Tuple, cast
+from pathlib import Path
+from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-import tiktoken
 
 from pdf_handler import count_pages, pages_to_images_with_ui
-from processing import build_image_content, build_messages, clean_markdown_output
-from processing import extract_headers, update_header_stack, build_context, PageImage
+from config import Config
+from processing import (
+    extract_headers,
+    process_batch_images,
+    process_batch_text,
+    update_header_stack,
+    build_context,
+    PageImage,
+    build_image_content,
+    build_messages,
+    clean_markdown_output,
+)
 from ui import UI
-from schema import OCRResponse, ImageMetadata
+from schema import ImageExtractionResponse
 
 
-MODEL_NAME = "hf:Qwen/Qwen3-VL-235B-A22B-Instruct"
-API_BASE_URL = "https://api.synthetic.new/v1/"
-
-# For token counting - use a similar model's tokenizer since Qwen3-VL might not be in tiktoken
-# GPT-4 tokenizer should be close enough for approximate counting
-TOKENIZER_MODEL = "gpt-4"
-enc = tiktoken.encoding_for_model(TOKENIZER_MODEL)
-
-MAX_TOKENS = 64000
-TEMPERATURE = 0.1
-
-DEFAULT_BATCH_SIZE = 10
-DEFAULT_START_PAGE = 1
-
-MIN_HTTP_ERROR_CODE = 400
-MAX_RETRY_ATTEMPTS = 3
-OUTPUT_SUFFIX = "_ocr.md"
-IMAGES_DIR_SUFFIX = "_images"
-
-EXPONENTIAL_BACKOFF_BASE = 2
+config = Config()
 
 
-def setup_output_files(pdf_path: str):
+def setup_output_files(pdf_path: Path):
     from pathlib import Path
 
     pdf_stem = Path(pdf_path).stem
@@ -52,107 +43,6 @@ def setup_output_files(pdf_path: str):
     return markdown_file, images_dir
 
 
-def process_batch(
-    client: openai.OpenAI,
-    output_file,
-    images: List[PageImage],
-    batch_num: int,
-    total_batches: int,
-    context: str,
-    ui: UI,
-) -> Tuple[int, int, List[Tuple[int, str]]]:
-    """Process a batch and stream to file, return token counts and headers"""
-    from processing import build_image_content, build_messages, clean_markdown_output
-    import time
-
-    image_content, input_tokens = build_image_content(images)
-    ui.print_batch_start(batch_num, total_batches, input_tokens)
-
-    last_exception = None
-    for attempt in range(MAX_RETRY_ATTEMPTS):
-        try:
-            stream = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=cast(
-                    List[ChatCompletionMessageParam],
-                    build_messages(context, image_content, len(images)),
-                ),
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                stream=True,
-            )
-
-            response_text = ""
-            output_tokens = 0
-
-            # Track lines for display
-            lines_to_show = 5
-            last_lines = []
-            last_update = 0
-            update_interval = 0.05  # 20fps
-
-            ui.print_processing_message()
-
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    response_text += delta.content
-                    # Count tokens live as we stream
-                    output_tokens = len(enc.encode(response_text))
-                    output_file.write(delta.content)
-                    output_file.flush()
-
-                    # Update display periodically
-                    current_time = time.time()
-                    if current_time - last_update > update_interval:
-                        last_update = current_time
-
-                        # Get last N lines
-                        all_lines = response_text.split("\n")
-                        last_lines = all_lines[-lines_to_show:]
-
-                        ui.update_progress_display(
-                            last_lines, output_tokens, lines_to_show
-                        )
-
-                if hasattr(chunk, "usage") and chunk.usage:
-                    output_tokens = chunk.usage.total_tokens
-
-            # Clean the response for header extraction
-            cleaned_text = clean_markdown_output(response_text)
-            headers = extract_headers(cleaned_text)
-
-            ui.print_batch_output_tokens(output_tokens)
-            return input_tokens, output_tokens, headers
-
-        except APIStatusError as e:
-            if e.status_code < MIN_HTTP_ERROR_CODE:
-                ui.print_api_error(e.status_code)
-                raise RuntimeError(f"API error in batch {batch_num + 1}") from e
-
-            last_exception = e
-
-            if attempt < MAX_RETRY_ATTEMPTS - 1:
-                wait_time = EXPONENTIAL_BACKOFF_BASE**attempt
-                ui.print_batch_retry(
-                    batch_num, attempt, MAX_RETRY_ATTEMPTS, e.status_code, wait_time
-                )
-                time.sleep(wait_time)
-            else:
-                ui.print_max_retries_exceeded(batch_num, e.status_code)
-                raise RuntimeError(
-                    f"Max retries exceeded for batch {batch_num + 1}"
-                ) from last_exception
-        except Exception as e:
-            ui.print_unexpected_error(str(e))
-            raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
-
-    raise RuntimeError("Unexpected code path")
-
-
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Multi-Page PDF OCR using Qwen3-VL-235B model"
@@ -161,7 +51,7 @@ def parse_arguments():
     parser.add_argument(
         "--start-page",
         type=int,
-        default=DEFAULT_START_PAGE,
+        default=config.DEFAULT_START_PAGE,
         help="First page to process (default: 1)",
     )
     parser.add_argument(
@@ -170,7 +60,7 @@ def parse_arguments():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=DEFAULT_BATCH_SIZE,
+        default=config.DEFAULT_BATCH_SIZE,
         help="Number of pages to process per batch (default: 10)",
     )
     parser.add_argument(
@@ -181,14 +71,14 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def validate_file(ui, pdf_path: str) -> bool:
-    if not os.path.exists(pdf_path):
+def validate_file(ui, pdf_path: Path) -> bool:
+    if not pdf_path.exists():
         ui.print_file_not_found(pdf_path)
         return False
     return True
 
 
-def get_total_pages(ui, pdf_path: str, specified_end: Optional[int]) -> int:
+def get_total_pages(ui, pdf_path: Path, specified_end: Optional[int]) -> int:
     if specified_end:
         return specified_end
     ui.print_counting_pages()
@@ -207,53 +97,51 @@ def batch_iterator(start_page: int, end_page: int, batch_size: int):
         batch_num += 1
 
 
-def process_and_save_batch(
-    client: openai.OpenAI,
-    pdf_path: str,
+async def process_and_save_batch(
+    client: AsyncOpenAI,
+    pdf_path: Path,
     output_file,
     page_start: int,
     page_end: int,
     batch_num: int,
     total_batches: int,
-    images_dir: Optional[str],
-    header_stack: List[Tuple[int, str]],
+    images_dir: Optional[Path],
+    context: str,
     ui: UI,
-) -> Tuple[int, int]:
+) -> Tuple[int, int, List[Tuple[int, str]]]:
     images = pages_to_images_with_ui(pdf_path, page_start, page_end, images_dir)
 
-    context = build_context([], header_stack) if header_stack else ""
-
-    input_tokens, output_tokens, headers = process_batch_structured(
-        client,
-        output_file,
-        images,
-        batch_num,
-        total_batches,
-        page_start,
-        images_dir,
-        context,
-        ui,
+    # Run text and image extraction in parallel
+    text_task = process_batch_text(
+        client, output_file, images, batch_num, total_batches, context, ui
+    )
+    image_task = process_batch_images(
+        client, images, batch_num, total_batches, page_start, images_dir, context, ui
     )
 
-    update_header_stack(header_stack, headers)
+    (
+        (text_input_tokens, text_output_tokens, headers),
+        (image_input_tokens, _),
+    ) = await asyncio.gather(text_task, image_task)
+
+    input_tokens = text_input_tokens + image_input_tokens
+    output_tokens = text_output_tokens
 
     if batch_num < total_batches - 1:
         time.sleep(1)
 
-    return input_tokens, output_tokens
+    return input_tokens, output_tokens, headers
 
 
-def main():
-    import time
-
+async def main():
     ui = UI()
 
     args = parse_arguments()
 
-    if not validate_file(ui, args.pdf_file):
+    if not validate_file(ui, Path(args.pdf_file)):
         sys.exit(1)
 
-    ui.print_header(MODEL_NAME, args.pdf_file, args.start_page, args.end_page)
+    ui.print_header(config.MODEL_NAME, args.pdf_file, args.start_page, args.end_page)
 
     total_pages = get_total_pages(ui, args.pdf_file, args.end_page)
 
@@ -265,25 +153,21 @@ def main():
 
     ui.print_batch_info(total_batches, args.batch_size)
 
-    api_key = os.environ.get("SYNTHETIC_API_KEY")
-    if not api_key:
-        ui.print_api_key_missing()
-        sys.exit(1)
+    # Client is already initialized in config singleton
 
-    client = openai.OpenAI(api_key=api_key, base_url=API_BASE_URL)
-
-    header_stack: List[Tuple[int, str]] = []
     total_input_tokens = 0
     total_output_tokens = 0
     start_time = time.time()
     ui.set_batch_info(total_batches, start_time)
 
     with open(output_file_path, "w", encoding="utf-8") as output_file:
+        header_stack: List[Tuple[int, str]] = []
         for batch_num, page_start, page_end in batch_iterator(
             args.start_page, total_pages, args.batch_size
         ):
-            input_toks, output_toks = process_and_save_batch(
-                client,
+            context = build_context(header_stack) if header_stack else ""
+            input_toks, output_toks, new_headers = await process_and_save_batch(
+                config.client,
                 args.pdf_file,
                 output_file,
                 page_start,
@@ -291,9 +175,10 @@ def main():
                 batch_num,
                 total_batches,
                 images_dir,
-                header_stack,
+                context,
                 ui,
             )
+            header_stack = update_header_stack(header_stack, new_headers)
             total_input_tokens += input_toks
             total_output_tokens += output_toks
 
@@ -310,124 +195,5 @@ def main():
     )
 
 
-def extract_delta(old: str, new: str) -> str:
-    """Compute delta between accumulated markdown states"""
-    if not old:
-        return new
-    if new.startswith(old):
-        return new[len(old) :]
-    return new
-
-
-def process_batch_structured(
-    client: openai.OpenAI,
-    output_file,
-    images: List[PageImage],
-    batch_num: int,
-    total_batches: int,
-    page_start: int,
-    images_dir: Optional[str],
-    context: str,
-    ui: UI,
-) -> Tuple[int, int, List[Tuple[int, str]]]:
-    """Process a batch using structured streaming output"""
-    from pdf_handler import extract_and_save_image
-
-    image_content, input_tokens = build_image_content(images)
-    ui.print_batch_start(batch_num, total_batches, input_tokens)
-
-    messages = build_messages(context, image_content, len(images))
-
-    last_exception = None
-    for attempt in range(MAX_RETRY_ATTEMPTS):
-        try:
-            with client.beta.chat.completions.stream(
-                model=MODEL_NAME,
-                messages=cast(List[ChatCompletionMessageParam], messages),
-                response_format=OCRResponse,
-            ) as stream:
-                accumulated_markdown = ""
-                accumulated_images: Dict[str, ImageMetadata] = {}
-                output_tokens = 0
-                images_extracted = 0
-
-                ui.print_processing_message()
-
-                for event in stream:
-                    if event.type == "content.delta":
-                        if hasattr(event, "parsed") and event.parsed:
-                            parsed = event.parsed
-
-                            markdown_val = getattr(parsed, "markdown", None)
-                            if markdown_val:
-                                new_content = extract_delta(
-                                    accumulated_markdown, str(markdown_val)
-                                )
-                                accumulated_markdown = str(markdown_val)
-                                output_file.write(new_content)
-                                output_file.flush()
-
-                                tokens = len(enc.encode(accumulated_markdown))
-                                output_tokens = max(output_tokens, tokens)
-
-                            images_val = getattr(parsed, "images", None)
-                            if images_val:
-                                for fig_id, metadata in images_val.items():
-                                    if (
-                                        fig_id not in accumulated_images
-                                        or metadata.bbox
-                                        != accumulated_images[fig_id].bbox
-                                    ):
-                                        if images_dir:
-                                            try:
-                                                extract_and_save_image(
-                                                    fig_id,
-                                                    metadata,
-                                                    page_start,
-                                                    images,
-                                                    images_dir,
-                                                    ui,
-                                                )
-                                                images_extracted += 1
-                                            except Exception as e:
-                                                ui.print_streaming_error(
-                                                    f"Image extraction failed: {e}"
-                                                )
-
-                                    accumulated_images[fig_id] = metadata
-
-                ui.print_batch_stats(images_extracted)
-
-                cleaned_markdown = clean_markdown_output(accumulated_markdown)
-                headers = extract_headers(cleaned_markdown)
-
-                ui.print_batch_output_tokens(output_tokens)
-                return input_tokens, output_tokens, headers
-
-        except APIStatusError as e:
-            if e.status_code < MIN_HTTP_ERROR_CODE:
-                ui.print_api_error(e.status_code)
-                raise RuntimeError(f"API error in batch {batch_num + 1}") from e
-
-            last_exception = e
-
-            if attempt < MAX_RETRY_ATTEMPTS - 1:
-                wait_time = EXPONENTIAL_BACKOFF_BASE**attempt
-                ui.print_batch_retry(
-                    batch_num, attempt, MAX_RETRY_ATTEMPTS, e.status_code, wait_time
-                )
-                time.sleep(wait_time)
-            else:
-                ui.print_max_retries_exceeded(batch_num, e.status_code)
-                raise RuntimeError(
-                    f"Max retries exceeded for batch {batch_num + 1}"
-                ) from last_exception
-        except Exception as e:
-            ui.print_unexpected_error(str(e))
-            raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
-
-    raise RuntimeError("Unexpected code path")
-
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

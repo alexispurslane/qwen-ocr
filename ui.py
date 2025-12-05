@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from typing import List, Optional
 
 
@@ -11,6 +12,7 @@ class UI:
         self.current_batch: int = 0
         self.current_batch_input_tokens: int = 0
         self.io_ratio: float = 2.0
+        self.total_images_extracted: int = 0
 
     def set_batch_info(
         self,
@@ -37,7 +39,7 @@ class UI:
         if end_page:
             print(f"📄 Pages {start_page}-{end_page}")
 
-    def print_file_not_found(self, pdf_path: str) -> None:
+    def print_file_not_found(self, pdf_path: Path) -> None:
         print(f"❌ File not found: {pdf_path}")
 
     def print_counting_pages(self) -> None:
@@ -47,7 +49,7 @@ class UI:
         print(f"📄 Total: {total} pages")
 
     def print_output_info(
-        self, output_file_path: str, images_dir: Optional[str]
+        self, output_file_path: Path, images_dir: Optional[Path]
     ) -> None:
         print(f"📝 Output will be saved to: {output_file_path}")
         if images_dir:
@@ -62,7 +64,7 @@ class UI:
 
     def print_processing_complete(
         self,
-        output_file_path: str,
+        output_file_path: Path,
         total_pages: int,
         total_batches: int,
         total_input_tokens: int,
@@ -174,7 +176,10 @@ class UI:
 
         total_in = self.total_input_tokens + self.current_batch_input_tokens
         total_out = self.total_output_tokens + output_tokens
-        print(f"[{bar}] {percentage}% | ETA {eta_str} | ↑{total_in} ↓{total_out}")
+        print(
+            f"[{bar}] Batch {self.current_batch + 1}/{self.total_batches} | {percentage}% | "
+            f"ETA {eta_str} | ↑{total_in} ↓{total_out} | 📸 {self.total_images_extracted}"
+        )
 
     def print_image_extraction_success(self, fig_id: str, page_num: int) -> None:
         print(f"  📸 Extracted {fig_id} from page {page_num}")
@@ -183,8 +188,9 @@ class UI:
         print(f"  ❌ Failed to extract {fig_id}: {error_msg}")
 
     def print_streaming_error(self, error_msg: str) -> None:
-        print(f"  ⚠️  Streaming error: {error_msg}")
+        print(f"  ⚠️  {error_msg}")
 
     def print_batch_stats(self, images_extracted: int) -> None:
+        self.total_images_extracted += images_extracted
         if images_extracted > 0:
             print(f"  📊 Extracted {images_extracted} images")
