@@ -9,7 +9,7 @@ from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from config import Config
-from ui import UI
+from callbacks import ProcessingCallbacks
 from schema import ImageExtractionResponse
 
 
@@ -175,12 +175,12 @@ async def process_batch_text(
     batch_num: int,
     total_batches: int,
     context: str,
-    ui: UI,
+    callbacks: ProcessingCallbacks,
 ) -> Tuple[int, int, List[Tuple[int, str]]]:
     """Process a batch and stream to file, return token counts and headers"""
 
     image_content, input_tokens = build_image_content(images, downscale=True)
-    ui.print_batch_start(batch_num, total_batches, input_tokens)
+    callbacks.on_batch_start(batch_num, total_batches, input_tokens)
 
     last_exception = None
     for attempt in range(config.MAX_RETRY_ATTEMPTS):
@@ -194,7 +194,7 @@ async def process_batch_text(
             last_update = 0
             update_interval = 0.05  # 20fps
 
-            ui.print_processing_message()
+            callbacks.on_progress_update(["Processing..."], 0)
 
             async with client.chat.completions.stream(
                 model=config.MODEL_NAME,
@@ -224,41 +224,35 @@ async def process_batch_text(
                             all_lines = response_text.split("\n")
                             last_lines = all_lines[-lines_to_show:]
 
-                            ui.update_progress_display(
-                                last_lines, output_tokens, lines_to_show
-                            )
+                            callbacks.on_progress_update(last_lines, output_tokens)
 
             # Clean the response for header extraction
             cleaned_text = clean_markdown_output(response_text)
             headers = extract_headers(cleaned_text)
-
-            ui.print_batch_output_tokens(output_tokens)
+            callbacks.on_progress_update(last_lines, output_tokens)
             return input_tokens, output_tokens, headers
 
         except APIStatusError as e:
             if e.status_code < config.MIN_HTTP_ERROR_CODE:
-                ui.print_api_error(e.status_code)
+                callbacks.on_error(f"API error {e.status_code}")
                 raise RuntimeError(f"API error in batch {batch_num + 1}") from e
 
             last_exception = e
 
             if attempt < config.MAX_RETRY_ATTEMPTS - 1:
                 wait_time = config.EXPONENTIAL_BACKOFF_BASE**attempt
-                ui.print_batch_retry(
-                    batch_num,
-                    attempt,
-                    config.MAX_RETRY_ATTEMPTS,
-                    e.status_code,
-                    wait_time,
+                callbacks.on_progress_update(
+                    [f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"],
+                    0
                 )
                 time.sleep(wait_time)
             else:
-                ui.print_max_retries_exceeded(batch_num, e.status_code)
+                callbacks.on_error(f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}")
                 raise RuntimeError(
                     f"Max retries exceeded for batch {batch_num + 1}"
                 ) from last_exception
         except Exception as e:
-            ui.print_unexpected_error(str(e))
+            callbacks.on_error(str(e))
             raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
 
     raise RuntimeError("Unexpected code path")
@@ -272,13 +266,13 @@ async def process_batch_images(
     page_start: int,
     images_dir: Optional[Path],
     context: str,
-    ui: UI,
+    callbacks: ProcessingCallbacks,
 ) -> Tuple[int, int]:
     """Extract images from batch using structured output"""
     from pdf_handler import extract_and_save_image
 
     image_content, input_tokens = build_image_content(images)
-    ui.print_batch_start(batch_num, total_batches, input_tokens)
+    callbacks.on_batch_start(batch_num, total_batches, input_tokens)
 
     messages = build_messages(
         config.SYSTEM_PROMPT_IMAGES, context, image_content, len(images)
@@ -287,7 +281,7 @@ async def process_batch_images(
     last_exception = None
     for attempt in range(config.MAX_RETRY_ATTEMPTS):
         try:
-            ui.print_processing_message()
+            callbacks.on_progress_update(["Processing..."], 0)
 
             response = await client.chat.completions.parse(
                 model=config.MODEL_NAME,
@@ -314,13 +308,13 @@ async def process_batch_images(
                             )  # Normalize to 0-1
 
                             if normalized_area_percentage < config.MIN_AREA_PERCENTAGE:
-                                ui.print_streaming_error(
+                                callbacks.on_error(
                                     f"Skipping fig {metadata.fig_number}: too small ({normalized_area_percentage:.3f} of page)"
                                 )
                                 continue
 
                             if normalized_area_percentage > config.MAX_AREA_PERCENTAGE:
-                                ui.print_streaming_error(
+                                callbacks.on_error(
                                     f"Skipping fig {metadata.fig_number}: too large, likely no figure on page ({normalized_area_percentage:.3f} of page)"
                                 )
                                 continue
@@ -335,40 +329,38 @@ async def process_batch_images(
                                 metadata,
                                 images,
                                 images_dir,
-                                ui,
                             )
                             images_extracted += 1
                         except Exception as e:
-                            ui.print_streaming_error(f"Image extraction failed: {e}")
+                            callbacks.on_error(f"Image extraction failed: {e}")
 
-            ui.print_batch_stats(images_extracted)
-            ui.print_batch_output_tokens(0)  # No text output for image extraction
+            callbacks.on_progress_update(["Batch output: 0 tokens"], 0)
+            callbacks.on_progress_update(
+                ["Batch output: 0 tokens"], 0
+            )  # No text output for image extraction
             return input_tokens, 0
 
         except APIStatusError as e:
             if e.status_code < config.MIN_HTTP_ERROR_CODE:
-                ui.print_api_error(e.status_code)
+                callbacks.on_error(f"API error {e.status_code}")
                 raise RuntimeError(f"API error in batch {batch_num + 1}") from e
 
             last_exception = e
 
             if attempt < config.MAX_RETRY_ATTEMPTS - 1:
                 wait_time = config.EXPONENTIAL_BACKOFF_BASE**attempt
-                ui.print_batch_retry(
-                    batch_num,
-                    attempt,
-                    config.MAX_RETRY_ATTEMPTS,
-                    e.status_code,
-                    wait_time,
+                callbacks.on_progress_update(
+                    [f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"],
+                    0
                 )
                 time.sleep(wait_time)
             else:
-                ui.print_max_retries_exceeded(batch_num, e.status_code)
+                callbacks.on_error(f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}")
                 raise RuntimeError(
                     f"Max retries exceeded for batch {batch_num + 1}"
                 ) from last_exception
         except Exception as e:
-            ui.print_unexpected_error(str(e))
+            callbacks.on_error(str(e))
             raise RuntimeError(f"Unexpected error in batch {batch_num + 1}") from e
 
     raise RuntimeError("Unexpected code path")

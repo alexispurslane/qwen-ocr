@@ -10,6 +10,8 @@ dependencies = [
     "pdf2image",
     "PyPDF2",
     "tiktoken",
+    "customtkinter",
+    "async-tkinter-loop",
 ]
 
 [tool.pyright]
@@ -18,3 +20,6 @@ exclude = ["**/__pycache__", "**/.git"]
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
+
+[project.scripts]
+qwen-ocr = "main:main"

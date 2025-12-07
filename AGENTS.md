@@ -436,3 +436,4 @@ For issues or questions:
 - Extract both text and images from PDFs
 - Async batch processing with retry logic
 - LSP may show false import errors after file creation
+- UNLESS ACTUALLY EDITING FILES, KEEP CODE BLOCKS AS SMALL OUTLINES

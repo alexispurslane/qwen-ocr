@@ -102,9 +102,8 @@ def extract_and_save_image(
     metadata: ImageMetadata,
     images: List[PageImage],
     images_dir: Path,
-    ui,
 ) -> None:
-    "" """Extract image from page and save to disk"""
+    """Extract image from page and save to disk"""
     try:
         page_number = metadata.page_number
         page_image = next(img for img in images if img.page_num == page_number)
@@ -119,7 +118,6 @@ def extract_and_save_image(
 
         cropped = extract_image_from_page(page_image, metadata.bbox)
         save_extracted_image(cropped, fig_id, images_dir)
-        ui.print_image_extraction_success(fig_id, page_number)
 
     except Exception as e:
-        ui.print_image_extraction_error(fig_id, str(e))
+        raise RuntimeError(f"Failed to extract {fig_id}: {str(e)}") from e

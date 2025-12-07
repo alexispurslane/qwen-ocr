@@ -58,6 +58,11 @@ class Config:
         self.OUTPUT_SUFFIX = "_ocr.md"
         self.IMAGES_DIR_SUFFIX = "_images"
 
+        # GUI settings
+        self.GUI_WINDOW_WIDTH: int = 900
+        self.GUI_WINDOW_HEIGHT: int = 700
+        self.GUI_THEME: str = "dark"
+
         # Tokenizer Configuration
         self.TOKENIZER_MODEL = "gpt-4"
         self._enc = tiktoken.encoding_for_model(self.TOKENIZER_MODEL)
