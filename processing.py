@@ -9,19 +9,11 @@ from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from config import Config
-from callbacks import ProcessingCallbacks
+from common import ProcessingCallbacks, PageImage
 from schema import ImageExtractionResponse
 
 
 config = Config()
-
-
-@dataclass
-class PageImage:
-    page_num: int
-    image_bytes: bytes
-    dimensions: Tuple[int, int]  # (width, height)
-
 
 def extract_headers(markdown: str) -> List[Tuple[int, str]]:
     headers = []

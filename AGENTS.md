@@ -19,6 +19,8 @@ This is a **Multi-Page PDF OCR (Optical Character Recognition) system** that use
 - **PyPDF2**: PDF metadata handling
 - **pydantic**: Data validation and settings management
 - **tiktoken**: Token counting for API usage tracking
+- **customtkinter**: Modern GUI framework
+- **async-tkinter-loop**: Async/await support for Tkinter
 
 ### External Services:
 - **Synthetic API** (`https://api.synthetic.new/v1/`)
@@ -33,11 +35,11 @@ This is a **Multi-Page PDF OCR (Optical Character Recognition) system** that use
 
 ### Main Modules:
 
-#### `main.py` (Entry Point)
-- Command-line argument parsing
-- Batch processing orchestration
-- Output directory setup
-- Token counting and cost estimation
+#### `main.py` (GUI Application Entry Point)
+- **CustomTkinter** GUI application with modern interface
+- Async event loop integration for non-blocking UI
+- Real-time progress tracking and status updates
+- File selection and processing controls
 - Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/main.py`
 
 #### `processing.py` (Core Processing Logic)
@@ -63,17 +65,22 @@ This is a **Multi-Page PDF OCR (Optical Character Recognition) system** that use
 - Pydantic validation schemas
 - Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/schema.py`
 
-#### `ui.py` (User Interface)
-- Progress bars and status updates
-- Token usage statistics display
-- Error handling and user feedback
-- ETA calculations and batch progress tracking
-- Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/ui.py`
+#### `callbacks.py` (Progress Reporting System)
+- `ProcessingCallbacks` dataclass with callback functions
+- Decoupled progress reporting interface
+- Real-time updates for batch progress, image extraction, errors, and completion
+- Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/callbacks.py`
 
-#### `test_image_extraction.py` (Testing Utility)
-- Tests image extraction on specific pages
-- Debugging and validation tool
-- Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/test_image_extraction.py`
+#### `components/` (UI Component Library)
+- **Modular, reusable UI components** built with CustomTkinter
+- `file_browser.py`: Tree-style file browser with navigation, history, and filtering
+- `tree_item.py`: Individual tree items with expand/collapse, selection, and double-click navigation
+- Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/components/`
+
+#### `test_file_browser.py` (Component Testing)
+- Standalone test harness for UI components
+- Interactive testing of file browser functionality
+- Position: `/Users/alexispurslane/Development/scratch/qwen-ocr/test_file_browser.py`
 
 ### Supporting Files:
 - `pyproject.toml`: Project configuration and dependencies
@@ -108,6 +115,7 @@ max_tokens = config.MAX_TOKENS
 - **System Prompts**: `SYSTEM_PROMPT_TEXT`, `SYSTEM_PROMPT_IMAGES`
 - **Output Settings**: `OUTPUT_SUFFIX`, `IMAGES_DIR_SUFFIX`
 - **Context Settings**: `PRECEDING_CONTEXT_HEADER`, `CONTEXT_WINDOW_SIZE`
+- **GUI Settings**: `GUI_WINDOW_WIDTH`, `GUI_WINDOW_HEIGHT`
 
 ### Configuration Design Principles:
 1. **Singleton Pattern**: Single instance ensures consistency across modules
@@ -134,6 +142,56 @@ client = config.client
 - Images saved as: `{page_number}_fig{fig_number}.png`
 - Output directory: `{pdf_stem}_converted/images/`
 - Markdown output: `{pdf_stem}_converted/index.md`
+
+## UI Architecture
+
+### Component-Based Design:
+The GUI uses a **component-based architecture** with reusable, self-contained UI elements:
+
+#### FileBrowser Component (`components/file_browser.py`)
+- **Tree-style navigation** with expand/collapse directories
+- **History management** with back/forward navigation
+- **Path display** with truncation for long paths
+- **File filtering** with hidden file toggle
+- **Selection callbacks** for file/directory events
+- **Navigation controls**: Back, Forward, Up buttons
+
+#### TreeItem Component (`components/tree_item.py`)
+- **Individual tree nodes** representing files/directories
+- **Expand/collapse** for directories with visual indicators (▶/▼)
+- **Selection highlighting** with visual feedback
+- **Double-click navigation** for directories
+- **Lazy loading** of child items on expansion
+- **Icon display** (📁 for directories, 📄 for files)
+
+### GUI State Management (`main.py`):
+- **GUIState dataclass** encapsulates all processing state
+- **Async task management** for non-blocking UI during processing
+- **Real-time progress updates** via callback system
+- **Control state management** (enable/disable buttons during processing)
+
+### Callback Integration:
+The GUI integrates with the processing pipeline through the **ProcessingCallbacks** system:
+- `on_batch_start`: Update batch counter and progress
+- `on_progress_update`: Real-time status text and progress bar updates
+- `on_image_extracted`: Track extracted images and display notifications
+- `on_error`: Display error messages in status area
+- `on_complete`: Show completion summary with statistics
+- `on_page_convert`: Update status during PDF to image conversion
+- `on_page_tokens`: Display token usage per page range
+
+### Async GUI Pattern:
+```python
+self.start_button = ctk.CTkButton(
+     self.control_frame,
+     text="Start Processing",
+     command=async_handler(self._start_processing),
+)
+
+async def _start_processing(self):
+    # regular async function, just `await` on things as normal
+    pass
+```
 
 ## Coding Conventions
 
@@ -167,28 +225,33 @@ client = config.client
 ### Key Commands:
 ```bash
 # Always use uv instead of python or pip
-uv run python main.py input.pdf [options]
+uv run python main.py  # Launch GUI application
 
 # Install dependencies
 uv sync
 
-# Run the project on a PDF
-uv run main.py input.pdf --start-page 1 --end-page 50 --batch-size 10 --save-images
-
-# Test image extraction
-uv run python test_image_extraction.py
+# Test UI components
+uv run python test_file_browser.py
 
 # Linting and formatting
 uv run ruff check .
 uv run ruff format .
 ```
 
-### Common Options:
-- `--start-page`: Starting page (default: 1)
-- `--end-page`: Ending page (default: all pages)
-- `--batch-size`: Pages per batch (default: 10)
-- `--save-images`: Save extracted images
-- `--max-retries`: Maximum API retry attempts
+### GUI Application Features:
+- **File Selection**: Browse and select PDF files
+- **Page Range**: Configure start and end pages
+- **Batch Size**: Adjust processing batch size (default: 10)
+- **Image Extraction**: Toggle saving extracted images
+- **Progress Tracking**: Real-time progress bar and status updates
+- **Token Statistics**: Input/output token counts and cost estimation
+- **Processing Controls**: Start/Stop processing with async cancellation
+
+### Common Options (GUI):
+- **Start Page**: Starting page for processing (default: 1)
+- **End Page**: Ending page for processing (default: all pages)
+- **Batch Size**: Pages processed per API call (default: 10)
+- **Save Images**: Extract and save images from PDF (checkbox)
 
 ### Development Notes:
 1. **Always use `uv run`** for Python commands
@@ -196,20 +259,25 @@ uv run ruff format .
 3. **Output structure**: Creates `{pdf_stem}_converted/` directory
 4. **Token management**: Tracks input/output tokens for cost monitoring
 5. **Batch processing**: Configurable batch size for memory management
+6. **GUI framework**: CustomTkinter for modern, themed interface
+7. **Async integration**: `async-tkinter-loop` for responsive UI during processing
 
 ## Testing and Validation
 
 ### Testing Approach:
-- Use `test_image_extraction.py` for specific page testing
+- Use `test_file_browser.py` for interactive UI component testing
 - Check token counts stay within limits
 - Validate markdown output structure
 - Verify image extraction quality
+- Test GUI responsiveness during long operations
 
 ### Validation Points:
 1. **Markdown syntax**: Proper headers, lists, code blocks
 2. **Image references**: Correct figure numbering and references
 3. **Document flow**: Context preservation across pages
 4. **Error recovery**: Handling of API failures gracefully
+5. **UI responsiveness**: Non-blocking during processing
+6. **Progress accuracy**: Progress bar and status updates
 
 ## Architecture Patterns
 
@@ -217,22 +285,29 @@ uv run ruff format .
 ```
 PDF Input → PDF Handler → Processing Module → API Calls → Structured Output
      ↓          ↓              ↓                  ↓            ↓
-   Page    Convert to    Build prompts     Text & Image   Markdown +
-   Count    images       with context      Extraction     Extracted Images
+   GUI      Convert to    Build prompts     Text & Image   Markdown +
+  Select    images       with context      Extraction     Extracted Images
+   File
+     ↓
+   Callbacks → GUI Updates (Progress, Status, Errors)
 ```
 
 ### Key Design Patterns:
-1. **Factory Pattern**: Image optimization methods
-2. **Builder Pattern**: Context construction across batches
-3. **Observer Pattern**: Progress tracking and UI updates
-4. **Strategy Pattern**: Different processing for text vs images
-5. **Decorator Pattern**: Retry logic wrapping API calls
+1. **Component Pattern**: Reusable UI components (FileBrowser, TreeItem)
+2. **Callback Pattern**: Decoupled progress reporting via ProcessingCallbacks
+3. **Singleton Pattern**: Centralized configuration management
+4. **Builder Pattern**: Context construction across batches
+5. **Observer Pattern**: GUI updates based on processing events
+6. **Strategy Pattern**: Different processing for text vs images
+7. **Decorator Pattern**: Retry logic wrapping API calls
+8. **Async/Await Pattern**: Non-blocking UI with concurrent processing
 
 ### Performance Considerations:
 - **Image downsampling** to reduce token usage
 - **Batch processing** to minimize API calls
 - **Context caching** between batches
-- **Parallel processing** where possible
+- **Async I/O** for responsive GUI during processing
+- **Lazy loading** for tree items to reduce memory usage
 
 ## Error Handling Strategy
 
@@ -247,11 +322,13 @@ retry_delay = min_retry_delay * (2 ** (attempt - 1)) + random_jitter
 2. **Network Issues**: Retry with increasing delays
 3. **Invalid Responses**: Schema validation and retry
 4. **Memory Issues**: Batch size adjustment
+5. **GUI Errors**: Graceful degradation with user-friendly messages
 
 ### Recovery Methods:
 - **Checkpointing**: Resume from last successful batch
 - **Partial Output**: Save progress incrementally
 - **Error Logging**: Detailed error reports for debugging
+- **Async Cancellation**: Clean task cancellation in GUI
 
 ## Code Quality Guidelines
 
@@ -261,148 +338,32 @@ retry_delay = min_retry_delay * (2 ** (attempt - 1)) + random_jitter
 uv run ruff check . && uv run ruff format .
 
 # Check typing if applicable
-uv run mypy --check-untyped-defs .
-
-# Run relevant tests
-uv run pytest test_image_extraction.py
+uv tool run pyright .
 ```
-
-### Code Review Checklist:
-- [ ] Type hints present for all functions
-- [ ] Error handling comprehensive
-- [ ] Async/await pattern followed
-- [ ] No hard-coded API keys or secrets
-- [ ] Constants extracted to configuration
-- [ ] Documentation updated if needed
-- [ ] Tests updated for new functionality
-
-### Security Considerations:
-- **Never commit** API keys or secrets
-- **Validate inputs** to prevent injection attacks
-- **Sanitize outputs** to prevent markdown injection
-- **Rate limiting** to prevent API abuse
 
 ## Extension Points
 
 ### Adding New Features:
-1. **New image formats**: Extend `pdf_handler.py`
+1. **New UI components**: Add to `components/` directory
 2. **Additional outputs**: Add new output modules
 3. **Custom prompts**: Modify `processing.py` system prompts
 4. **Alternative models**: Update API configuration
-
-### Configuration Options:
-- Custom DPI settings
-- Alternative image optimization strategies
-- Different token calculation methods
-- Custom batch processing logic
-
-### Plugin Architecture:
-- Processing pipeline is modular
-- Handlers can be swapped or extended
-- Output formats are separate from processing logic
-
-## Troubleshooting Guide
-
-### Common Issues:
-
-#### API Key Issues:
-```bash
-# Check environment variable
-echo $SYNTHETIC_API_KEY
-```
-
-#### Dependency Issues:
-```bash
-# Reinstall dependencies
-uv sync --clean
-```
-
-#### PDF Conversion Issues:
-- Check PDF permissions
-- Verify DPI settings
-- Ensure sufficient disk space
-
-#### Token Limit Issues:
-- Reduce batch size
-- Increase image downsampling
-- Split document into smaller sections
-
-### Debugging:
-```bash
-# Verbose output
-uv run python main.py input.pdf --verbose
-
-# Test specific pages
-uv run python test_image_extraction.py --page 42
-
-# Check intermediate files
-ls -la {pdf_stem}_converted/
-```
-
-## Performance Optimization
-
-### Memory Optimization:
-- Process in configurable batches
-- Clear memory between batches
-- Use efficient data structures
-
-### API Cost Optimization:
-- Downsample images appropriately
-- Use optimal batch sizes
-- Cache common responses
-
-### Speed Optimization:
-- Parallel processing where possible
-- Async I/O operations
-- Efficient image encoding
-
-## Contributing Guidelines
-
-### Workflow:
-1. **Create feature branch**
-2. **Add tests** for new functionality
-3. **Run linting** before committing
-4. **Update documentation** as needed
-5. **Submit pull request**
-
-### Commit Messages:
-- Use descriptive, imperative mood
-- Reference issue numbers if applicable
-- Separate concerns into different commits
-
-### Version Management:
-- Update `pyproject.toml` version
-- Document changes in README
-- Update dependencies in `uv.lock`
-
-## Known Limitations
-
-### Current Limitations:
-1. **API Dependency**: Requires external service
-2. **Cost**: Token-based pricing model
-3. **Rate Limiting**: Subject to API limits
-4. **Image Quality**: Downscaling affects small text
-
-### Future Improvements:
-1. **Local model support** for offline operation
-2. **Additional output formats** (HTML, LaTeX, DOCX)
-3. **Table recognition** and structure extraction
-4. **Mathematical formula** recognition
-5. **Cross-reference** resolution
+5. **New callbacks**: Extend `ProcessingCallbacks` dataclass
 
 ## Example Usage
 
-### Basic Usage:
+### GUI Application:
 ```bash
-# Process entire PDF
-uv run python main.py document.pdf
-
-# Process with image extraction
-uv run python main.py paper.pdf --save-images --batch-size 5
-
-# Process specific pages
-uv run python main.py thesis.pdf --start-page 50 --end-page 100
+# Launch the GUI application
+uv run python main.py
 ```
+
+### Expected GUI Flow:
+1. **Select PDF**: Click "Select PDF" button and choose a PDF file
+2. **Configure Settings**: Set page range, batch size, and image extraction options
+3. **Start Processing**: Click "Start Processing" to begin OCR
+4. **Monitor Progress**: Watch real-time progress bar and status updates
+5. **View Results**: Find output in `{pdf_stem}_converted/` directory
 
 ### Expected Output:
 ```
@@ -413,17 +374,6 @@ document_converted/
     ├── 2_fig1.png    # Page 2, figure 1
     └── 3_fig2.png    # Page 3, figure 2
 ```
-
-## Support
-
-For issues or questions:
-1. Check troubleshooting guide
-2. Review existing issues
-3. Submit detailed bug report including:
-   - PDF sample
-   - Error messages
-   - System information
-   - Steps to reproduce
 
 ## Memories
 
@@ -437,3 +387,9 @@ For issues or questions:
 - Async batch processing with retry logic
 - LSP may show false import errors after file creation
 - UNLESS ACTUALLY EDITING FILES, KEEP CODE BLOCKS AS SMALL OUTLINES
+- GUI built with CustomTkinter for modern interface
+- Component-based UI architecture with reusable components
+- Callback system for decoupled progress reporting
+- Async GUI pattern for responsive interface during processing
+- FileBrowser component with tree navigation and history
+- TreeItem component for individual file/directory items

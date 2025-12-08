@@ -1,6 +1,8 @@
 """Configuration singleton for Qwen OCR project."""
 
+import json
 import os
+from pathlib import Path
 import tiktoken
 from typing import Optional
 from openai import AsyncOpenAI
@@ -10,6 +12,7 @@ class Config:
     """Singleton configuration class."""
 
     _instance: Optional["Config"] = None
+    _CONFIG_FILE_PATH = Path.home() / ".config" / "qwen-ocr" / "qwen-ocr.json"
 
     def __new__(cls):
         if cls._instance is None:
@@ -156,6 +159,31 @@ Return ONLY raw Markdown:
         self.DOCUMENT_BREADCRUMB_HEADER = "### DOCUMENT LOCATION BREADCRUMB\n"
         self.CONVERTED_CONTENT_HEADER = "### CONVERTED CONTENT SO FAR\n\n"
         self.CONTEXT_WINDOW_SIZE = 32000 * 4  # Last 32000 tokens
+
+    def save(self) -> None:
+        """Save configuration to JSON file."""
+        self._CONFIG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {}
+        for key, value in vars(self).items():
+            if key.startswith("_") or key == "client":
+                continue
+            data[key] = value
+
+        with open(self._CONFIG_FILE_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def load(self) -> None:
+        """Load configuration from JSON file."""
+        if not self._CONFIG_FILE_PATH.exists():
+            return
+
+        with open(self._CONFIG_FILE_PATH, "r") as f:
+            data = json.load(f)
+
+        for key, value in data.items():
+            if hasattr(self, key) and key != "client" and not key.startswith("_"):
+                setattr(self, key, value)
 
     @property
     def enc(self):

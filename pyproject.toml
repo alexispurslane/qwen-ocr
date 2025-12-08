@@ -12,6 +12,12 @@ dependencies = [
     "tiktoken",
     "customtkinter",
     "async-tkinter-loop",
+    "tkinterweb",
+    "markdown-it-py[plugins]",
+    "linkify-it-py>=2.0.3",
+    "mdit-py-plugins>=0.5.0",
+    "beautifulsoup4>=4.14.3",
+    "psutil",
 ]
 
 [tool.pyright]
