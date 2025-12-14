@@ -6,7 +6,6 @@ import customtkinter as ctk
 from .tree_item import TreeItem
 from .fs_watcher import FileSystemWatcher
 
-
 class FileBrowser(ctk.CTkFrame):
     """A collapsible tree-style file browser component."""
 
@@ -16,6 +15,7 @@ class FileBrowser(ctk.CTkFrame):
         width: int = 300,
         height: int = 400,
         on_file_select: Optional[Callable[[Path], None]] = None,
+        on_directory_change: Optional[Callable[[Path], None]] = None,
         file_filter: Optional[Callable[[Path], bool]] = None,
         **kwargs,
     ):
@@ -34,6 +34,7 @@ class FileBrowser(ctk.CTkFrame):
         self.width = width
         self.height = height
         self.on_file_select = on_file_select
+        self.on_directory_change = on_directory_change
 
         def filter(path: Path):
             if self.show_dotfiles or not path.name.startswith("."):
@@ -67,6 +68,7 @@ class FileBrowser(ctk.CTkFrame):
         # Create UI
         self._setup_ui()
         self.refresh()
+
 
     def _setup_ui(self) -> None:
         """Setup the user interface."""
@@ -131,6 +133,8 @@ class FileBrowser(ctk.CTkFrame):
         # Bind click events
         self.tree_frame.bind("<Button-1>", self._on_click)
 
+        self._navigation_enabled: bool = True
+
     def _truncate_path(self, path: Path, max_length: int = 30) -> str:
         """Truncate a path for display."""
         path_str = str(path)
@@ -190,7 +194,7 @@ class FileBrowser(ctk.CTkFrame):
 
         # Handle double-click navigation for directories
         if navigate and item.is_dir:
-            self._navigate_to(item.path)
+            self.navigate_to(item.path)
             return
 
         # Call user callback for files
@@ -204,27 +208,10 @@ class FileBrowser(ctk.CTkFrame):
             self.selected_item.deselect()
             self.selected_item = None
 
-    def _navigate_to(self, path: Path) -> None:
-        """Navigate to a path and update history."""
-        if not path.is_dir():
-            return
-
-        # Add to history if it's a new path
-        if self.history_index < len(self.history) - 1:
-            # We're not at the end, truncate forward history
-            self.history = self.history[: self.history_index + 1]
-
-        if self.current_path != path:
-            self.history.append(path)
-            self.history_index += 1
-            self.current_path = path
-            self.refresh()
-            self._update_navigation_buttons()
-
     def go_up(self) -> None:
         """Go up one directory level."""
         if self.current_path.parent != self.current_path:
-            self._navigate_to(self.current_path.parent)
+            self.navigate_to(self.current_path.parent)
 
     def go_back(self) -> None:
         """Go back in history."""
@@ -250,11 +237,6 @@ class FileBrowser(ctk.CTkFrame):
         self.forward_button.configure(
             state="normal" if self.history_index < len(self.history) - 1 else "disabled"
         )
-
-    def navigate_to(self, path: Path) -> None:
-        """Navigate to a specific directory."""
-        if path.is_dir():
-            self._navigate_to(path)
 
     def _toggle_dotfiles(self) -> None:
         """Toggle showing hidden files."""
@@ -309,3 +291,36 @@ class FileBrowser(ctk.CTkFrame):
         if self.selected_item and not self.selected_item.is_dir:
             return self.selected_item.path
         return None
+
+    def set_navigation_enabled(self, enabled: bool) -> None:
+        """Enable/disable navigation"""
+        self._navigation_enabled = enabled
+        state = "normal" if enabled else "disabled"
+        self.back_button.configure(state=state)
+        self.forward_button.configure(state=state)
+        self.up_button.configure(state=state)
+        self.new_dir_button.configure(state=state)
+
+    def navigate_to(self, path: Path) -> None:
+        """Navigate to a path and update history."""
+        if not path.is_dir():
+            return
+
+        if not self._navigation_enabled:
+            return
+
+        # Add to history if it's a new path
+        if self.history_index < len(self.history) - 1:
+            # We're not at the end, truncate forward history
+            self.history = self.history[: self.history_index + 1]
+
+        if self.current_path != path:
+            self.history.append(path)
+            self.history_index += 1
+            self.current_path = path
+            self.refresh()
+            self._update_navigation_buttons()
+
+            # Call directory change callback if set
+            if self.on_directory_change:
+                self.on_directory_change(path)

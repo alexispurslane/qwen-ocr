@@ -6,7 +6,7 @@ from typing import Optional, Callable
 from io import BytesIO
 import customtkinter as ctk
 from PIL import Image
-from common import PageImage
+from models.page_models import PageImage
 
 
 class ImageFrame(ctk.CTkFrame):

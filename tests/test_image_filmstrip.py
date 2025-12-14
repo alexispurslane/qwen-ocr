@@ -13,7 +13,7 @@ sys.path.append(parent_dir)
 
 
 from components.image_filmstrip import ImageFilmStrip
-from common import PageImage
+from models.page_models import PageImage
 
 
 class ImageFilmStripTestApp:

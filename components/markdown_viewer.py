@@ -195,6 +195,29 @@ class MarkdownViewer(ctk.CTkFrame):
             self._render_task.cancel()
             self._render_task = None
 
+    async def set_content(self, text: str) -> None:
+        """Clear and set full markdown content"""
+        await self.clear()
+        await self.append_markdown(text)
+
+    def get_scroll_percentage(self) -> float:
+        """Get scroll position (0.0-1.0)"""
+        try:
+            scroll_info = self.html_frame._vsb.get()
+            if len(scroll_info) >= 2:
+                return float(scroll_info[0])
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def set_scroll_percentage(self, pos: float) -> None:
+        """Set scroll position (0.0-1.0)"""
+        try:
+            pos = max(0.0, min(1.0, float(pos)))
+            self.html_frame.yview_moveto(pos)
+        except Exception:
+            pass
+
     def set_base_url(self, base_url: str) -> None:
         """Set base URL for image path resolution."""
         self._base_url = base_url

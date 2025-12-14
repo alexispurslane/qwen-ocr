@@ -4,8 +4,8 @@ from pathlib import Path
 from PIL import Image
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader
-from processing import PageImage
-from schema import ImageMetadata
+from models.page_models import PageImage
+from models.image_metadata import ImageMetadata
 
 PDF_DPI = 130
 WHITE_THRESHOLD = 250

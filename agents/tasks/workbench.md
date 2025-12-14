@@ -479,27 +479,29 @@ async with asyncio.TaskGroup() as tg:
 
 ## �⃣ Implementation Roadmap
 
-### Phase 1: Foundation & Component Prerequisites
+### ✅ Phase 1: Foundation & Component Prerequisites
+
+**Status: COMPLETED**
 
 **Before creating workbench, complete these foundational tasks:**
 
-1. **Split common.py into models/callbacks.py and models/page_models.py**:
-   - Move `ProcessingCallbacks` from `common.py` to `models/callbacks.py`
-   - Move `PageImage` from `common.py` to `models/page_models.py`
-   - Update imports in all affected files
-   - Delete `common.py` after split
+1. **✅ Split common.py into models/callbacks.py and models/page_models.py**:
+   - ✅ Move `ProcessingCallbacks` from `common.py` to `models/callbacks.py`
+   - ✅ Move `PageImage` from `common.py` to `models/page_models.py`
+   - ✅ Update imports in all affected files
+   - ✅ Delete `common.py` after split
 
-2. **components/markdown_viewer.py** - Add methods:
-   - `set_content(text: str)` - Clear and set full content
-   - `get_scroll_percentage()` → float - Get scroll position (0.0-1.0)
-   - `set_scroll_percentage(pos: float)` - Set scroll position
+2. **✅ components/markdown_viewer.py** - Add methods:
+   - ✅ `set_content(text: str)` - Clear and set full content
+   - ✅ `get_scroll_percentage()` → float - Get scroll position (0.0-1.0)
+   - ✅ `set_scroll_percentage(pos: float)` - Set scroll position
 
-3. **components/file_browser.py** - Add methods:
-   - `navigate_to(path: Path)` - Change directory
-   - `set_navigation_enabled(enabled: bool)` - Lock/unlock navigation
-   - `on_directory_change(callback: Callable[[Path], None])` - Set callback
+3. **✅ components/file_browser.py** - Add methods:
+   - ✅ `navigate_to(path: Path)` - Change directory
+   - ✅ `set_navigation_enabled(enabled: bool)` - Lock/unlock navigation
+   - ✅ `on_directory_change(callback: Callable[[Path], None])` - Set callback
 
-4. **processing.py** - Pass `all_lines` to callback (lines 214-218):
+4. **✅ processing.py** - Pass `all_lines` to callback (lines 214-218):
    ```python
    # Before:
    all_lines = response_text.split("\n")
@@ -511,15 +513,15 @@ async with asyncio.TaskGroup() as tg:
    callbacks.on_progress_update(all_lines, output_tokens)  # Pass all lines
    ```
 
-5. **Move schema.py → models/**:
-   - Create `models/` directory
-   - Create `models/image_metadata.py` with `ImageMetadata` class
-   - Create `models/api_schemas.py` with `ImageExtractionResponse` class
-   - Delete `schema.py` after move
+5. **✅ Move schema.py → models/**:
+   - ✅ Create `models/` directory
+   - ✅ Create `models/image_metadata.py` with `ImageMetadata` class
+   - ✅ Create `models/api_schemas.py` with `ImageExtractionResponse` class
+   - ✅ Delete `schema.py` after move
 
-6. Create `models/tab_data.py` - `TabData` dataclass (pure data model, no UI references)
+6. **✅ Create `models/tab_data.py`** - `TabData` dataclass (pure data model, no UI references)
 
-7. Create `dialogs/config_dialog.py` - Wraps `ConfigPanel` in modal dialog
+7. **✅ Create `dialogs/config_dialog.py`** - Wraps `ConfigPanel` in modal dialog
 
 ### Phase 2: Processing Module Creation
 

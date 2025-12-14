@@ -1,16 +1,7 @@
-"""Shared data types and structures."""
+"""Callback definitions for processing progress reporting."""
 
 from dataclasses import dataclass
-from typing import Tuple, Callable, List
-from pathlib import Path
-
-@dataclass
-class PageImage:
-    """Represents a single page image from a PDF."""
-
-    page_num: int
-    image_bytes: bytes
-    dimensions: Tuple[int, int]  # (width, height)
+from typing import Callable, List
 
 
 @dataclass
@@ -21,6 +12,6 @@ class ProcessingCallbacks:
     on_progress_update: Callable[[List[str], int], None]
     on_image_extracted: Callable[[str, int], None]
     on_error: Callable[[str], None]
-    on_complete: Callable[[Path, int, int, int, int, float], None]
+    on_complete: Callable[[object, int, int, int, int, float], None]
     on_page_convert: Callable[[int, int], None]
     on_page_tokens: Callable[[int, int, int], None]

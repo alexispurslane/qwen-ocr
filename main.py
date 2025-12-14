@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 import customtkinter as ctk
 from async_tkinter_loop import async_handler, async_mainloop
-from common import ProcessingCallbacks
+from models.callbacks import ProcessingCallbacks
 
 from pdf_handler import count_pages, pages_to_images_with_ui
 from config import Config

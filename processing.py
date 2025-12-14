@@ -8,11 +8,13 @@ from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from config import Config
-from common import ProcessingCallbacks, PageImage
-from schema import ImageExtractionResponse
+from models.callbacks import ProcessingCallbacks
+from models.page_models import PageImage
+from models.api_schemas import ImageExtractionResponse
 
 
 config = Config()
+
 
 def extract_headers(markdown: str) -> List[Tuple[int, str]]:
     headers = []
@@ -211,11 +213,10 @@ async def process_batch_text(
                         if current_time - last_update > update_interval:
                             last_update = current_time
 
-                            # Get last N lines
+                            # Get all lines for full content tracking
                             all_lines = response_text.split("\n")
-                            last_lines = all_lines[-lines_to_show:]
 
-                            callbacks.on_progress_update(last_lines, output_tokens)
+                            callbacks.on_progress_update(all_lines, output_tokens)
 
             # Clean the response for header extraction
             cleaned_text = clean_markdown_output(response_text)
@@ -233,12 +234,16 @@ async def process_batch_text(
             if attempt < config.MAX_RETRY_ATTEMPTS - 1:
                 wait_time = config.EXPONENTIAL_BACKOFF_BASE**attempt
                 callbacks.on_progress_update(
-                    [f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"],
-                    0
+                    [
+                        f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"
+                    ],
+                    0,
                 )
                 time.sleep(wait_time)
             else:
-                callbacks.on_error(f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}")
+                callbacks.on_error(
+                    f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}"
+                )
                 raise RuntimeError(
                     f"Max retries exceeded for batch {batch_num + 1}"
                 ) from last_exception
@@ -341,12 +346,16 @@ async def process_batch_images(
             if attempt < config.MAX_RETRY_ATTEMPTS - 1:
                 wait_time = config.EXPONENTIAL_BACKOFF_BASE**attempt
                 callbacks.on_progress_update(
-                    [f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"],
-                    0
+                    [
+                        f"API error {e.status_code} in batch {batch_num + 1}, retry {attempt + 1}/{config.MAX_RETRY_ATTEMPTS} (waiting {wait_time}s)"
+                    ],
+                    0,
                 )
                 time.sleep(wait_time)
             else:
-                callbacks.on_error(f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}")
+                callbacks.on_error(
+                    f"Max retries exceeded for batch {batch_num + 1}, status {e.status_code}"
+                )
                 raise RuntimeError(
                     f"Max retries exceeded for batch {batch_num + 1}"
                 ) from last_exception

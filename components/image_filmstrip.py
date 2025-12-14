@@ -3,7 +3,7 @@
 import platform
 from typing import List, Optional, Callable, Dict
 import customtkinter as ctk
-from common import PageImage
+from models.page_models import PageImage
 from components.image_frame import ImageFrame
 
 
