@@ -411,7 +411,7 @@ def _update_action_bar_states(self):
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="disabled")
         return
-    
+
     tab = self.tabs[self.current_tab_id]
     if tab.is_processing():
         # Tab is processing
@@ -505,12 +505,12 @@ async with asyncio.TaskGroup() as tg:
    all_lines = response_text.split("\n")
    last_lines = all_lines[-lines_to_show:]
    callbacks.on_progress_update(last_lines, output_tokens)
-   
+
    # After:
    all_lines = response_text.split("\n")
    callbacks.on_progress_update(all_lines, output_tokens)  # Pass all lines
    ```
-   
+
 5. **Move schema.py → models/**:
    - Create `models/` directory
    - Create `models/image_metadata.py` with `ImageMetadata` class
@@ -519,13 +519,15 @@ async with asyncio.TaskGroup() as tg:
 
 6. Create `models/tab_data.py` - `TabData` dataclass (pure data model, no UI references)
 
+7. Create `dialogs/config_dialog.py` - Wraps `ConfigPanel` in modal dialog
+
 ### Phase 2: Processing Module Creation
 
-7. **Move processing.py → processing/ocr_processing.py**
+8. **Move processing.py → processing/ocr_processing.py**
    - Renames and moves to new directory
    - Update all imports in file
 
-8. Create `processing/tab_processor.py` 
+9. Create `processing/tab_processor.py`
    - Extract document orchestration logic from old `main.py`'s `_process_pdf()` method
    - Takes `TabData` and `ProcessingCallbacks` as parameters
    - Updates `tab.all_markdown_lines`, `tab.page_images`, `tab.extracted_images` directly
@@ -533,7 +535,7 @@ async with asyncio.TaskGroup() as tg:
 
 ### Phase 3: Main Application Core
 
-9. Create `workbench.py` - `OCRWorkbench` class
+10. Create `workbench.py` - `OCRWorkbench` class
    - `setup_ui()` - Build layout with shared UI components
    - `open_tab(pdf_path)` - Create new tab, add to tab_view, return tab_id
    - `close_tab(tab_id)` - Cancel processing if running, cleanup
@@ -542,35 +544,10 @@ async with asyncio.TaskGroup() as tg:
    - `_update_action_bar_states()` - Update Start/Cancel button states
    - Callback implementations that check `self.current_tab_id` against callback `tab_id` parameter
 
-9. **Update `main.py`**
+11. **Update `main.py`**
    - Change from `OCRApp` class to simple entry point
    - Import `OCRWorkbench` from `workbench.py`
    - Create instance and start event loop
-
-### Phase 4: Dialog Wrapper
-
-10. Create `dialogs/config_dialog.py` - Wraps `ConfigPanel` in modal dialog
-
-### Phase 5: Testing & Polishing (1-2 hours)
-
-11. Test state transitions: open tab → start → switch tabs → close tab
-12. Test concurrency: Start 2-3 PDFs, verify independent progress
-13. Test error handling: Invalid PDF, permission denied, network error
-16. Verify scroll position restoration across tab switches
-17. Test responsive layout at different window sizes
-
-**Why this order**: Dependencies are resolved from bottom-up. Foundation → Components → Models → Processing → Main App → Entry Point.
-
-**Why**: Most complex piece; benefit from stable foundation (Phase 1+2).
-
-### Phase 4: Polishing & Testing (1-2 hours)
-
-18. Create `main.py` - Simple entry point
-19. Test state transitions, error scenarios
-20. Verify responsive layout at different window sizes
-21. Test concurrent processing (2-3 PDFs simultaneously)
-
-**Why**: Integration testing reveals edge cases in state management.
 
 ## 🎯 Key Code Snippets
 
@@ -578,11 +555,11 @@ async with asyncio.TaskGroup() as tg:
 
 ```python
 def _on_progress_update(self, tab_id: str, lines: List[str], output_tokens: int):
-    """Update statusbar and TabData; conditionally update shared UI if this tab is visible."""
+    """Update statusbar, conditionally update shared UI if this tab is visible."""
     # Update statusbar (always)
     message = " | ".join(lines[-3:])  # Last 3 lines for brevity
     self.statusbar.set_status(message, icon="⏳")
-    
+
     # Check if callback is for currently visible tab
     if tab_id != self.current_tab_id:
         return  # Don't update shared UI for background tabs
@@ -593,7 +570,7 @@ def _on_progress_update(self, tab_id: str, lines: List[str], output_tokens: int)
     )
 ```
 
-**Why this pattern**: 
+**Why this pattern**:
 - **TabData is updated by the processing layer**: `tab_processor.py` updates `tab.all_markdown_lines` directly
 - **Callback only handles UI updates**: Checks if the callback is for the currently visible tab
 - **On tab switch**: `_on_tab_selected()` loads the TabData into shared UI (see Snippet 4)
@@ -626,7 +603,7 @@ def start_conversion(self, tab_id: str):
     )
 ```
 
-**Why this pattern**: 
+**Why this pattern**:
 - **Pages extracted synchronously**: `pages_to_images_with_ui()` is fast enough to be blocking
 - **Update shared filmstrip immediately**: Shows page previews before OCR starts
 - **Tab processor updates TabData directly**: `tab_processor.py` modifies `tab.all_markdown_lines`, `tab.extracted_images`, etc.
