@@ -261,6 +261,7 @@ uv run ruff format .
 5. **Batch processing**: Configurable batch size for memory management
 6. **GUI framework**: CustomTkinter for modern, themed interface
 7. **Async integration**: `async-tkinter-loop` for responsive UI during processing
+8. **Test Organization**: All test files (`test_*.py`) must be placed in the `tests/` directory
 
 ## Testing and Validation
 
