@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Optional, Callable
 import customtkinter as ctk
+from .fs_watcher import FileSystemWatcher
 
 
 class TreeItem(ctk.CTkFrame):
@@ -39,6 +40,9 @@ class TreeItem(ctk.CTkFrame):
         self.expand_button: Optional[ctk.CTkButton] = None
         self.icon_label: ctk.CTkLabel
         self.name_label: ctk.CTkLabel
+
+        # File system watcher (created lazily when expanded)
+        self.watcher: Optional[FileSystemWatcher] = None
 
         self._setup_ui()
 
@@ -127,6 +131,10 @@ class TreeItem(ctk.CTkFrame):
             self.expand_button.configure(text="▼")
         self.expanded = True
 
+        if self.watcher is None:
+            self.watcher = FileSystemWatcher(self)
+        self.watcher.start(self.path)
+
         # Build children if not already built
         if not self.winfo_children()[1:]:  # Skip header frame
             try:
@@ -150,6 +158,9 @@ class TreeItem(ctk.CTkFrame):
             self.expand_button.configure(text="▶")
         self.expanded = False
 
+        if self.watcher:
+            self.watcher.stop()
+
         # Destroy all child widgets (skip header frame at index 0)
         for child in self.winfo_children()[1:]:
             child.destroy()
@@ -161,3 +172,19 @@ class TreeItem(ctk.CTkFrame):
     def deselect(self) -> None:
         """Deselect this item."""
         self.header_frame.configure(fg_color="transparent")
+
+    def refresh(self) -> None:
+        """Refresh this item and its children if expanded."""
+        try:
+            if not self.path.exists():
+                return
+        except (OSError, PermissionError):
+            return
+
+        current_name = self.path.name
+        if self.name_label.cget("text") != current_name:
+            self.name_label.configure(text=current_name)
+
+        if self.is_dir and self.expanded:
+            self.collapse()
+            self.expand()

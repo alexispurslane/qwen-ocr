@@ -1,8 +1,6 @@
 """Utility functions for profiling and memory measurement."""
 
 import sys
-from types import ModuleType, FunctionType
-from gc import get_referents
 
 
 def get_object_size(obj, seen=None):

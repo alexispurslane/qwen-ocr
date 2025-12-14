@@ -1,6 +1,5 @@
 """Test harness for ConfigPanel component."""
 
-import sys
 import customtkinter as ctk
 from components.config_panel import ConfigPanel
 from config import Config

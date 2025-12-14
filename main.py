@@ -1,9 +1,8 @@
-import sys
 import asyncio
 import time
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional
 import customtkinter as ctk
 from async_tkinter_loop import async_handler, async_mainloop
 from common import ProcessingCallbacks
@@ -15,9 +14,7 @@ from processing import (
     process_batch_text,
     update_header_stack,
     build_context,
-    PageImage,
 )
-from schema import ImageExtractionResponse
 
 config = Config()
 
@@ -380,7 +377,7 @@ class OCRApp:
 
         self._on_progress_update(
             [
-                f"✅ Processing complete!",
+                "✅ Processing complete!",
                 f"📄 Output saved to: {output_path}",
                 f"📊 Processed {total_pages} pages in {total_batches} batches",
                 f"📊 Total tokens: ↓{total_input_tokens} ↑{total_output_tokens}",

@@ -1,4 +1,4 @@
-"""High-performance film strip component for displaying PDF page thumbnails."""
+"""High-performance film strip component for displaying images with metadata."""
 
 import platform
 from typing import List, Optional, Callable, Dict
@@ -8,14 +8,17 @@ from components.image_frame import ImageFrame
 
 
 class ImageFilmStrip(ctk.CTkFrame):
-    """A high-performance, memory-efficient film strip for PDF page thumbnails."""
+    """A high-performance, memory-efficient film strip for images with customizable metadata."""
 
     def __init__(
         self,
         master,
         page_images: List[PageImage],
-        thumbnail_width: int = 150,
-        on_page_select: Optional[Callable[[int], None]] = None,
+        thumbnail_size: tuple[int, int] = (150, 210),
+        metadata_fn: Optional[Callable[[PageImage], str]] = None,
+        allow_multi_select: bool = False,
+        on_frame_select: Optional[Callable[[int, bool], None]] = None,
+        on_frame_double_click: Optional[Callable[[int], None]] = None,
         **kwargs,
     ):
         """
@@ -24,15 +27,21 @@ class ImageFilmStrip(ctk.CTkFrame):
         Args:
             master: Parent widget
             page_images: List of PageImage objects
-            thumbnail_width: Width of each thumbnail in pixels
-            on_page_select: Callback when a page is selected
+            thumbnail_size: (width, height) tuple for thumbnail dimensions
+            metadata_fn: Function to generate metadata string from PageImage
+            allow_multi_select: Allow Shift/Ctrl multi-selection
+            on_frame_select: Callback when frame selected: (index, is_selected)
+            on_frame_double_click: Callback when frame double-clicked: (index)
             **kwargs: Additional arguments for CTkFrame
         """
         super().__init__(master, **kwargs)
 
         self.page_images = page_images
-        self.thumbnail_width = thumbnail_width
-        self.on_page_select = on_page_select
+        self.thumbnail_width, self.thumbnail_height = thumbnail_size
+        self.metadata_fn = metadata_fn
+        self.allow_multi_select = allow_multi_select
+        self.on_frame_select = on_frame_select
+        self.on_frame_double_click = on_frame_double_click
 
         self.offset = 0
         self.buffer: List[ImageFrame] = []
@@ -71,7 +80,8 @@ class ImageFilmStrip(ctk.CTkFrame):
             frame = ImageFrame(
                 self.viewport,
                 on_click=self._on_frame_click,
-                thumbnail_width=self.thumbnail_width,
+                on_double_click=self._on_frame_double_click,
+                thumbnail_size=(self.thumbnail_width, self.thumbnail_height),
             )
             frame.bindtags(("ImageFilmStrip",) + frame.bindtags())
             self.buffer.append(frame)
@@ -142,14 +152,21 @@ class ImageFilmStrip(ctk.CTkFrame):
     def _on_frame_click(self, frame: ImageFrame) -> None:
         """Handle thumbnail click."""
         if frame.page_image:
-            page_num = frame.page_image.page_num
-            self.set_selection(page_num)
-            if self.on_page_select:
-                self.on_page_select(page_num)
+            frame_idx = self.page_images.index(frame.page_image)
+            is_selected = not self.selection_state.get(frame_idx, False)
+            self.set_selection(frame_idx, is_selected)
+            if self.on_frame_select:
+                self.on_frame_select(frame_idx, is_selected)
+
+    def _on_frame_double_click(self, frame: ImageFrame) -> None:
+        """Handle thumbnail double-click."""
+        if frame.page_image and self.on_frame_double_click:
+            frame_idx = self.page_images.index(frame.page_image)
+            self.on_frame_double_click(frame_idx)
 
     def _calculate_visible_count(self) -> None:
         """Calculate how many frames can fit in the viewport."""
-        frame_height = int(self.thumbnail_width * 1.4) + 18
+        frame_height = self.thumbnail_height + 18
         viewport_height = self.viewport.winfo_height()
 
         print(
@@ -190,10 +207,15 @@ class ImageFilmStrip(ctk.CTkFrame):
                 continue
 
             frame.unload_image()
-            frame.load_image(self.page_images[page_idx])
 
-            page_num = self.page_images[page_idx].page_num
-            if self.selection_state.get(page_num, False):
+            # Generate metadata text if function provided
+            metadata_text = None
+            if self.metadata_fn:
+                metadata_text = self.metadata_fn(self.page_images[page_idx])
+
+            frame.load_image(self.page_images[page_idx], metadata_text)
+
+            if self.selection_state.get(page_idx, False):
                 frame.select()
             else:
                 frame.deselect()
@@ -219,44 +241,51 @@ class ImageFilmStrip(ctk.CTkFrame):
             frame = self.buffer[i]
             frame.pack(fill="x", padx=5, pady=2)
 
-    def set_selection(self, page_num: int) -> None:
-        """Select a specific page."""
-        for p_num, selected in self.selection_state.items():
-            if selected:
-                self.selection_state[p_num] = False
-                for frame in self.buffer:
-                    if frame.page_image and frame.page_image.page_num == p_num:
-                        frame.deselect()
-                        break
+    def set_selection(self, frame_idx: int, selected: bool) -> None:
+        """Set selection state for a specific frame."""
+        if not self.allow_multi_select and selected:
+            # Single selection mode - clear all other selections
+            for p_num, was_selected in self.selection_state.items():
+                if was_selected:
+                    self.selection_state[p_num] = False
+                    for frame in self.buffer:
+                        if (
+                            frame.page_image
+                            and self.page_images.index(frame.page_image) == p_num
+                        ):
+                            frame.deselect()
+                            break
 
-        self.selection_state[page_num] = True
+        self.selection_state[frame_idx] = selected
 
+        # Update the frame's visual state
         for frame in self.buffer:
-            if frame.page_image and frame.page_image.page_num == page_num:
-                frame.select()
+            if (
+                frame.page_image
+                and self.page_images.index(frame.page_image) == frame_idx
+            ):
+                if selected:
+                    frame.select()
+                else:
+                    frame.deselect()
                 break
 
-    def get_selection(self) -> Optional[int]:
-        """Get currently selected page number."""
-        for page_num, selected in self.selection_state.items():
-            if selected:
-                return page_num
-        return None
+    def get_selection(self) -> list[int]:
+        """Get list of currently selected frame indices."""
+        return [idx for idx, selected in self.selection_state.items() if selected]
 
-    def scroll_to_page(self, page_num: int) -> None:
-        """Scroll to make page visible."""
-        if page_num < 1 or page_num > len(self.page_images):
+    def scroll_to_index(self, frame_idx: int) -> None:
+        """Scroll to make frame at index visible."""
+        if frame_idx < 0 or frame_idx >= len(self.page_images):
             return
 
         if len(self.page_images) <= self.visible_count:
             return
 
-        page_idx = page_num - 1
-
-        if page_idx < self.offset:
-            self.offset = page_idx
-        elif page_idx >= self.offset + self.visible_count:
-            self.offset = page_idx - self.visible_count + 1
+        if frame_idx < self.offset:
+            self.offset = frame_idx
+        elif frame_idx >= self.offset + self.visible_count:
+            self.offset = frame_idx - self.visible_count + 1
 
         self._refresh_buffer()
         self._update_scrollbar_position()

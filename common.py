@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from typing import Tuple, Callable, List
-from dataclasses import dataclass
 from pathlib import Path
 
 @dataclass

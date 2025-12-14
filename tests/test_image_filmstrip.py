@@ -54,8 +54,9 @@ class ImageFilmStripTestApp:
         self.filmstrip = ImageFilmStrip(
             master=self.left_panel,
             page_images=self.page_images,
-            on_page_select=self._on_page_selected,
-            thumbnail_width=100
+            on_frame_select=self._on_frame_selected,
+            on_frame_double_click=self._on_frame_double_clicked,
+            thumbnail_size=(100, 140),
         )
         self.filmstrip.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -78,15 +79,32 @@ class ImageFilmStripTestApp:
         )
         self.selected_page_label.pack(pady=10, padx=10, fill="x")
 
+        self.double_click_status = ctk.CTkLabel(
+            self.right_panel,
+            text="",
+            font=ctk.CTkFont(size=12),
+            text_color="blue",
+        )
+        self.double_click_status.pack(pady=5, padx=10, fill="x")
+
         self.control_frame = ctk.CTkFrame(self.right_panel)
         self.control_frame.pack(pady=20, padx=10, fill="x")
 
         self.scroll_button = ctk.CTkButton(
             self.control_frame,
             text="Scroll to Page 25",
-            command=lambda: self.filmstrip.scroll_to_page(25),
+            command=lambda: self.filmstrip.scroll_to_index(24),
         )
         self.scroll_button.pack(side="left", padx=5)
+
+        self.multi_select_var = ctk.BooleanVar(value=False)
+        self.multi_select_checkbox = ctk.CTkCheckBox(
+            self.control_frame,
+            text="Allow Multi-Select",
+            variable=self.multi_select_var,
+            command=self._toggle_multi_select,
+        )
+        self.multi_select_checkbox.pack(side="left", padx=20)
 
         self.instructions_label = ctk.CTkLabel(
             self.right_panel,
@@ -141,6 +159,13 @@ class ImageFilmStripTestApp:
         """Update performance statistics display."""
         selection = self.filmstrip.get_selection()
 
+        selection_str = "None"
+        if selection:
+            if isinstance(selection, list):
+                selection_str = f"[{', '.join(str(s) for s in selection)}]"
+            else:
+                selection_str = str(selection)
+
         self.buffer_info_label.configure(
             text=f"Buffer Size: {len(self.filmstrip.buffer)} frames\n"
             f"Visible Count: {self.filmstrip.visible_count}\n"
@@ -148,9 +173,7 @@ class ImageFilmStripTestApp:
             f"Total Pages: {len(self.page_images)}"
         )
 
-        self.selection_info_label.configure(
-            text=f"Selected Page: {selection if selection else 'None'}"
-        )
+        self.selection_info_label.configure(text=f"Selected Frames: {selection_str}")
 
         raw_bytes_mb = (
             sum(len(img.image_bytes) for img in self.page_images) / 1024 / 1024
@@ -200,14 +223,34 @@ class ImageFilmStripTestApp:
         ]
         return colors[page_num % len(colors)]
 
-    def _on_page_selected(self, page_num: int) -> None:
-        """Handle page selection."""
-        page_image = self.page_images[page_num - 1]
-        self.selected_page_label.configure(
-            text=f"Page Number: {page_image.page_num}\n\n"
-            f"Image Size: {len(page_image.image_bytes)} bytes\n"
-            f"Dimensions: {page_image.dimensions[0]}x{page_image.dimensions[1]}"
+    def _on_frame_selected(self, frame_idx: int, is_selected: bool) -> None:
+        """Handle frame selection."""
+        if is_selected:
+            page_image = self.page_images[frame_idx]
+            self.selected_page_label.configure(
+                text=f"Page Number: {page_image.page_num}\n\n"
+                f"Image Size: {len(page_image.image_bytes)} bytes\n"
+                f"Dimensions: {page_image.dimensions[0]}x{page_image.dimensions[1]}"
+            )
+        self._update_stats()
+
+    def _toggle_multi_select(self) -> None:
+        """Toggle multi-select mode."""
+        enabled = self.multi_select_var.get()
+        self.filmstrip.allow_multi_select = enabled
+        # Clear selections when toggling
+        if not enabled:
+            for idx in list(self.filmstrip.selection_state.keys()):
+                self.filmstrip.set_selection(idx, False)
+
+    def _on_frame_double_clicked(self, frame_idx: int) -> None:
+        """Handle frame double-click."""
+        page_image = self.page_images[frame_idx]
+        self.double_click_status.configure(
+            text=f"Double-clicked Page {page_image.page_num} - Would open preview modal"
         )
+        # Clear status after 2 seconds
+        self.root.after(2000, lambda: self.double_click_status.configure(text=""))
 
     def run(self) -> None:
         """Run the application."""

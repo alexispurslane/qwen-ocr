@@ -18,6 +18,7 @@ dependencies = [
     "mdit-py-plugins>=0.5.0",
     "beautifulsoup4>=4.14.3",
     "psutil",
+    "watchdog>=6.0.0",
 ]
 
 [tool.pyright]

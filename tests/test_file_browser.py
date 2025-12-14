@@ -1,6 +1,5 @@
 """Test script for the file browser component."""
 
-import sys
 from pathlib import Path
 import customtkinter as ctk
 from components.file_browser import FileBrowser
@@ -14,7 +13,7 @@ class FileBrowserTestApp:
         self.root.title("File Browser Test")
         self.root.geometry("800x600")
         self.root.attributes("-topmost", True)
-        
+
         # Main container
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
@@ -98,7 +97,8 @@ class FileBrowserTestApp:
             "1. Browse directories by clicking ▶/▼\n"
             "2. Click on PDF files to select them\n"
             "3. Use ↑ button to go up a directory\n"
-            "4. Only PDF files are shown",
+            "4. Use New Folder to create directories\n"
+            "5. Only PDF files are shown",
             anchor="w",
             justify="left",
         )

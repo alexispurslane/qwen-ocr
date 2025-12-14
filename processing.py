@@ -3,7 +3,6 @@ import time
 from io import BytesIO
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional, cast
-from dataclasses import dataclass
 from PIL import Image
 from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam

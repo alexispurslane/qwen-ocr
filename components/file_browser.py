@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import customtkinter as ctk
 from .tree_item import TreeItem
+from .fs_watcher import FileSystemWatcher
 
 
 class FileBrowser(ctk.CTkFrame):
@@ -48,11 +49,15 @@ class FileBrowser(ctk.CTkFrame):
         self.history_index: int = 0
         self.show_dotfiles: bool = False
 
+        # File system watcher
+        self.watcher: Optional[FileSystemWatcher] = None
+
         # UI elements (initialized in _setup_ui)
         self.header_frame: ctk.CTkFrame
         self.back_button: ctk.CTkButton
         self.forward_button: ctk.CTkButton
         self.up_button: ctk.CTkButton
+        self.new_dir_button: ctk.CTkButton
         self.path_label: ctk.CTkLabel
         self.dotfiles_var: ctk.BooleanVar
         self.dotfiles_checkbox: ctk.CTkCheckBox
@@ -85,7 +90,7 @@ class FileBrowser(ctk.CTkFrame):
         self.up_button = ctk.CTkButton(
             self.header_frame, text="↑", width=30, height=30, command=self.go_up
         )
-        self.up_button.pack(side="left", padx=2)
+        self.up_button.pack(side="left", padx=5)
 
         # Current path label
         self.path_label = ctk.CTkLabel(
@@ -95,6 +100,16 @@ class FileBrowser(ctk.CTkFrame):
             anchor="w",
         )
         self.path_label.pack(side="left", fill="x", expand=True, padx=5)
+
+        # New Folder button
+        self.new_dir_button = ctk.CTkButton(
+            self.header_frame,
+            text="New Folder",
+            width=80,
+            height=30,
+            command=self._create_new_directory,
+        )
+        self.new_dir_button.pack(side="right", padx=2)
 
         # Tree container (scrollable frame for root items)
         self.tree_frame = ctk.CTkScrollableFrame(self)
@@ -125,6 +140,9 @@ class FileBrowser(ctk.CTkFrame):
 
     def refresh(self) -> None:
         """Refresh the file tree."""
+        if self.watcher:
+            self.watcher.stop()
+
         # Clear existing items
         for widget in self.tree_frame.winfo_children():
             widget.destroy()
@@ -138,6 +156,10 @@ class FileBrowser(ctk.CTkFrame):
 
         # Reset scroll position to top
         self.tree_frame._parent_canvas.yview_moveto(0)
+
+        if self.watcher is None:
+            self.watcher = FileSystemWatcher(self)
+        self.watcher.start(self.current_path)
 
     def _build_tree(self, path: Path) -> None:
         """Build the tree structure for the given path."""
@@ -238,6 +260,49 @@ class FileBrowser(ctk.CTkFrame):
         """Toggle showing hidden files."""
         self.show_dotfiles = self.dotfiles_var.get()
         self.refresh()
+
+    def _create_new_directory(self) -> None:
+        """Create a new directory in the current location."""
+        dialog = ctk.CTkInputDialog(
+            text=f"Enter name for new directory in:\n{self.current_path}",
+            title="Create New Folder",
+        )
+        dir_name = dialog.get_input()
+
+        if not dir_name or not dir_name.strip():
+            return
+
+        dir_name = dir_name.strip()
+        new_path = self.current_path / dir_name
+
+        try:
+            new_path.mkdir()
+            self.refresh()
+        except FileExistsError:
+            error_dialog = ctk.CTkInputDialog(
+                title="Error: Directory Already Exists",
+                text=f"A file or directory named '{dir_name}' already exists.",
+            )
+            error_dialog.get_input()
+        except PermissionError:
+            error_dialog = ctk.CTkInputDialog(
+                title="Error: Permission Denied",
+                text=f"Cannot create directory '{dir_name}': Permission denied.",
+            )
+            error_dialog.get_input()
+        except OSError as e:
+            if "Invalid" in str(e) or ":" in dir_name or "/" in dir_name:
+                error_dialog = ctk.CTkInputDialog(
+                    title="Error: Invalid Directory Name",
+                    text=f"'{dir_name}' is not a valid directory name.\n\nNames cannot contain: / : * ? \" < > |",
+                )
+                error_dialog.get_input()
+            else:
+                error_dialog = ctk.CTkInputDialog(
+                    title="Error: Cannot Create Directory",
+                    text=f"Failed to create directory '{dir_name}': {e}",
+                )
+                error_dialog.get_input()
 
     def get_selected_file(self) -> Optional[Path]:
         """Get the currently selected file."""

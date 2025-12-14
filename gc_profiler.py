@@ -2,7 +2,6 @@
 
 import gc
 import time
-from typing import Callable, Optional
 
 
 class GCProfiler:
