@@ -46,6 +46,8 @@ qwen-ocr/
 ├── models/                          # NEW: Data models directory
 │   ├── __init__.py                 # Package init
 │   ├── tab_data.py                 # NEW: TabData dataclass for per-tab state
+│   ├── page_models.py              # MOVED PageImage from common.py
+│   ├── callbacks.py                # MOVED ProcessingCallbacks from common.py
 │   ├── image_metadata.py           # MOVED & RENAMED from root schema.py (ImageMetadata)
 │   └── api_schemas.py              # MOVED & RENAMED from root schema.py (ImageExtractionResponse)
 ├── dialogs/                         # NEW: Dialog wrappers
@@ -57,8 +59,8 @@ qwen-ocr/
 ├── schema.py                        # DELETED after move to models/
 ├── processing.py                    # DELETED after move to processing/ocr_processing.py
 ├── config.py                        # No changes ✓
-├── callbacks.py                     # No changes ✓
-└── common.py                        # No changes ✓
+├── callbacks.py                     # DELETED (moved ProcessingCallbacks to models/)
+└── common.py                        # DELETED after split (PageImage → models/page_models.py, ProcessingCallbacks → models/callbacks.py)
 ```
 
 ## 📝 Components: What, Why & How
@@ -477,21 +479,27 @@ async with asyncio.TaskGroup() as tg:
 
 ## �⃣ Implementation Roadmap
 
-### Phase 1: Component Prerequisites
+### Phase 1: Foundation & Component Prerequisites
 
-**Before creating workbench, components need new methods:**
+**Before creating workbench, complete these foundational tasks:**
 
-1. **components/markdown_viewer.py** - Add methods:
+1. **Split common.py into models/callbacks.py and models/page_models.py**:
+   - Move `ProcessingCallbacks` from `common.py` to `models/callbacks.py`
+   - Move `PageImage` from `common.py` to `models/page_models.py`
+   - Update imports in all affected files
+   - Delete `common.py` after split
+
+2. **components/markdown_viewer.py** - Add methods:
    - `set_content(text: str)` - Clear and set full content
    - `get_scroll_percentage()` → float - Get scroll position (0.0-1.0)
    - `set_scroll_percentage(pos: float)` - Set scroll position
 
-2. **components/file_browser.py** - Add methods:
+3. **components/file_browser.py** - Add methods:
    - `navigate_to(path: Path)` - Change directory
    - `set_navigation_enabled(enabled: bool)` - Lock/unlock navigation
    - `on_directory_change(callback: Callable[[Path], None])` - Set callback
 
-3. **processing.py** - Pass `all_lines` to callback (lines 214-218):
+4. **processing.py** - Pass `all_lines` to callback (lines 214-218):
    ```python
    # Before:
    all_lines = response_text.split("\n")
@@ -503,21 +511,21 @@ async with asyncio.TaskGroup() as tg:
    callbacks.on_progress_update(all_lines, output_tokens)  # Pass all lines
    ```
    
-4. **Move schema.py → models/**:
+5. **Move schema.py → models/**:
    - Create `models/` directory
    - Create `models/image_metadata.py` with `ImageMetadata` class
    - Create `models/api_schemas.py` with `ImageExtractionResponse` class
    - Delete `schema.py` after move
 
-5. Create `models/tab_data.py` - `TabData` dataclass (pure data model, no UI references)
+6. Create `models/tab_data.py` - `TabData` dataclass (pure data model, no UI references)
 
 ### Phase 2: Processing Module Creation
 
-6. **Move processing.py → processing/ocr_processing.py**
+7. **Move processing.py → processing/ocr_processing.py**
    - Renames and moves to new directory
    - Update all imports in file
 
-7. Create `processing/tab_processor.py` 
+8. Create `processing/tab_processor.py` 
    - Extract document orchestration logic from old `main.py`'s `_process_pdf()` method
    - Takes `TabData` and `ProcessingCallbacks` as parameters
    - Updates `tab.all_markdown_lines`, `tab.page_images`, `tab.extracted_images` directly
@@ -525,7 +533,7 @@ async with asyncio.TaskGroup() as tg:
 
 ### Phase 3: Main Application Core
 
-8. Create `workbench.py` - `OCRWorkbench` class
+9. Create `workbench.py` - `OCRWorkbench` class
    - `setup_ui()` - Build layout with shared UI components
    - `open_tab(pdf_path)` - Create new tab, add to tab_view, return tab_id
    - `close_tab(tab_id)` - Cancel processing if running, cleanup
@@ -548,19 +556,19 @@ async with asyncio.TaskGroup() as tg:
 11. Test state transitions: open tab → start → switch tabs → close tab
 12. Test concurrency: Start 2-3 PDFs, verify independent progress
 13. Test error handling: Invalid PDF, permission denied, network error
-14. Verify scroll position restoration across tab switches
-15. Test responsive layout at different window sizes
+16. Verify scroll position restoration across tab switches
+17. Test responsive layout at different window sizes
 
-**Why this order**: Dependencies are resolved from bottom-up. Components → Models → Processing → Main App → Entry Point.
+**Why this order**: Dependencies are resolved from bottom-up. Foundation → Components → Models → Processing → Main App → Entry Point.
 
 **Why**: Most complex piece; benefit from stable foundation (Phase 1+2).
 
 ### Phase 4: Polishing & Testing (1-2 hours)
 
-10. Create `main.py` - Simple entry point
-11. Test state transitions, error scenarios
-12. Verify responsive layout at different window sizes
-13. Test concurrent processing (2-3 PDFs simultaneously)
+18. Create `main.py` - Simple entry point
+19. Test state transitions, error scenarios
+20. Verify responsive layout at different window sizes
+21. Test concurrent processing (2-3 PDFs simultaneously)
 
 **Why**: Integration testing reveals edge cases in state management.
 
