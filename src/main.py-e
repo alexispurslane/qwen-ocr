@@ -1,0 +1,254 @@
+"""
+pywebview GUI for OCR workbench backend
+"""
+
+import os
+import webview
+import threading
+import asyncio
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
+
+from models.document_job import DocumentJob
+from models.callbacks import ProcessingCallbacks
+from config import Config
+
+config = Config()
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class ProcessingJobState:
+    job_id: str
+    pdf_path: str
+    status: str
+    progress: int
+    current_batch: int
+    total_batches: int
+    messages: List[str]
+    output_tokens: int
+    total_pages: int
+    total_input_tokens: int
+    total_output_tokens: int
+    images_extracted: int
+    total_cost: float
+    error: Optional[str] = None
+
+
+class OcrWorkbenchApi:
+    def __init__(self):
+        self.jobs: Dict[str, DocumentJob] = {}
+        self.job_states: Dict[str, ProcessingJobState] = {}
+        self.is_processing = False
+        self.window = None
+
+    def set_window(self, window):
+        self.window = window
+
+    def _update_backend_state(self):
+        """Update the frontend state with current job states"""
+        if self.window and hasattr(self.window, "state"):
+            self.window.state.backendState = {
+                "jobs": [asdict(state) for state in self.job_states.values()],
+                "isProcessing": self.is_processing,
+            }
+
+    def select_pdf_file(self) -> Optional[str]:
+        """Open file dialog for PDF selection"""
+        try:
+            result = self.window.create_file_dialog(
+                webview.FileDialog.OPEN,
+                allow_multiple=False,
+                file_types=("PDF Files (*.pdf)", "All Files (*.*)"),
+            )
+            if result and len(result) > 0:
+                return result[0]
+            return None
+        except Exception as e:
+            log.error(f"File selection error: {e}")
+            return None
+
+    def start_processing(self, pdf_path: str) -> str:
+        """Start processing a PDF file"""
+        job_id = f"job_{len(self.jobs)}"
+
+        state = ProcessingJobState(
+            job_id=job_id,
+            pdf_path=pdf_path,
+            status="pending",
+            progress=0,
+            current_batch=0,
+            total_batches=0,
+            messages=["Queued for processing"],
+            output_tokens=0,
+            total_pages=0,
+            total_input_tokens=0,
+            total_output_tokens=0,
+            images_extracted=0,
+            total_cost=0.0,
+        )
+        self.job_states[job_id] = state
+        self._update_backend_state()
+
+        pdf_file = Path(pdf_path)
+        output_dir = pdf_file.parent / f"{pdf_file.stem}_converted"
+        output_dir.mkdir(exist_ok=True)
+
+        job = DocumentJob(job_id, pdf_file, output_dir)
+        self.jobs[job_id] = job
+
+        def run_async_processing():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                callbacks = ProcessingCallbacks(
+                    on_batch_start=self._on_batch_start,
+                    on_progress_update=self._on_progress_update,
+                    on_image_extracted=self._on_image_extracted,
+                    on_error=self._on_error,
+                    on_complete=self._on_complete,
+                    on_page_convert=self._on_page_convert,
+                    on_page_tokens=self._on_page_tokens,
+                )
+
+                self.is_processing = True
+                self._update_backend_state()
+
+                loop.run_until_complete(job.run(callbacks))
+
+                self.is_processing = False
+                self._update_backend_state()
+            except Exception as e:
+                print(f"Processing error: {e}")
+                self.is_processing = False
+                if job_id in self.job_states:
+                    self.job_states[job_id].status = "error"
+                    self.job_states[job_id].error = str(e)
+                self._update_backend_state()
+
+        thread = threading.Thread(target=run_async_processing, daemon=True)
+        thread.start()
+
+        return job_id
+
+    def cancel_job(self, job_id: str):
+        """Cancel a processing job"""
+        if job_id in self.jobs:
+            job = self.jobs[job_id]
+            if job.is_processing() and job.processing_task:
+                job.processing_task.cancel()
+
+    def _on_batch_start(
+        self, job_id: str, batch_num: int, total_batches: int, input_tokens: int
+    ):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.status = "processing"
+            state.current_batch = batch_num
+            state.total_batches = total_batches
+            state.total_input_tokens += input_tokens
+            state.messages.append(f"Starting batch {batch_num + 1}/{total_batches}")
+            self._update_backend_state()
+
+    def _on_progress_update(self, job_id: str, messages: List[str], output_tokens: int):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.messages.extend(messages)
+            state.output_tokens = output_tokens
+            self._update_backend_state()
+
+    def _on_image_extracted(self, job_id: str, path: str, fig_number: int):
+        if job_id in self.job_states:
+            self.job_states[job_id].images_extracted += 1
+            self._update_backend_state()
+
+    def _on_error(self, job_id: str, error: str):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.status = "error"
+            state.error = error
+            state.messages.append(f"Error: {error}")
+            self._update_backend_state()
+
+    def _on_complete(
+        self,
+        job_id: str,
+        total_pages: int,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        images_extracted: int,
+        total_cost: float,
+    ):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.status = "completed"
+            state.total_pages = total_pages
+            state.total_input_tokens = total_input_tokens
+            state.total_output_tokens = total_output_tokens
+            state.images_extracted = images_extracted
+            state.total_cost = total_cost
+            state.progress = 100
+            state.messages.append("Processing completed successfully")
+            self._update_backend_state()
+
+    def _on_page_convert(self, job_id: str, page_num: int, total_pages: int):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.total_pages = total_pages
+            state.messages.append(f"Converting page {page_num}/{total_pages}")
+            self._update_backend_state()
+
+    def _on_page_tokens(self, job_id: str, input_tokens: int, output_tokens: int):
+        if job_id in self.job_states:
+            state = self.job_states[job_id]
+            state.total_input_tokens += input_tokens
+            state.total_output_tokens += output_tokens
+            self._update_backend_state()
+
+
+api = OcrWorkbenchApi()
+
+
+def set_interval(interval):
+    def decorator(function):
+        def wrapper(*args, **kwargs):
+            stopped = threading.Event()
+
+            def loop():
+                while not stopped.wait(interval):
+                    function(*args, **kwargs)
+
+            t = threading.Thread(target=loop)
+            t.daemon = True
+            t.start()
+            return stopped
+
+        return wrapper
+
+    return decorator
+
+
+@set_interval(0.5)
+def update_progress(window):
+    api._update_backend_state()
+
+
+if __name__ == "__main__":
+    if os.environ.get("OCR_DEBUG", "").lower() == "true":
+        window = webview.create_window(
+            "OCR Workbench", "http://localhost:5173/", js_api=api, min_size=(1024, 768)
+        )
+    else:
+        window = webview.create_window(
+            "OCR Workbench",
+            "frontend/dist/index.html",
+            js_api=api,
+            min_size=(1024, 768),
+        )
+
+    api.set_window(window)
+    window.events.loaded += lambda: update_progress(window)
+    webview.start(debug=bool(os.environ.get("OCR_DEBUG", "")))
